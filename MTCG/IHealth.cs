@@ -10,8 +10,8 @@ namespace MTCG
     
     interface IHealth
     {
-        int CurrentHealth { get; set; }
-        void recieveDamage(int amount);
-        void recieceHealing(int amount);
+        int CurrentHealth { get; }
+        void RecieveDamage(int amount);
+        void RecieceHealing(int amount);
     }
 }

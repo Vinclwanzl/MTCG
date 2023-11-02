@@ -10,18 +10,18 @@ namespace MTCG
     class Spell : Card
     {
         // TODO: find a way to make healingspells
-        // private int _healing { get; }
+        private int _healing { get; }
 
 
         //Spell that causes damage
-        public Spell(ElementalTypes elementalType, string name, int damage, int cost) : base(elementalType, name, damage, cost)
+        public Spell(ElementalTypes elementalType, int manaCost, string name, int damageAmount, int cost) : base(elementalType, manaCost, name, damageAmount, cost)
         {
 
         }
-        //Spell that does cause damage
-        public Spell(ElementalTypes elementalType, string name, int cost) : base(elementalType, name, cost)
+        //Spell that does causes healing
+        public Spell(ElementalTypes elementalType, int manaCost, int healingAmount, string name, int cost) : base(elementalType, manaCost, name, cost)
         {
-            //_healing = healing;
+            _healing = healingAmount;
         }
     }
 }

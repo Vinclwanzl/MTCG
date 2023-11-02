@@ -8,33 +8,56 @@ using System.Xml.Linq;
 
 namespace MTCG
 {
-    class User
+    public class User
     {
-        private string _name { get; set; }
-        private string _password { get; set; }
-        private List<Card> _deck { get; }
+        private int _amountOfWins;
+
+        private string _name;
+        public string Name 
+        {
+            get { return _name; }
+            set { _name = value; }
+        }
+        private string _password;
+        
+        protected string Password
+        {
+            get { return _password; }
+            set { _password = value; }
+        }
+        private List<Card> _deck; 
+        public List<Card> Deck { get { return _deck; } set { _deck = value; } }
         private List<Card> _stack;
-        public List<Card> Stack { get { return _stack; } }
-        private int _coinpurse { get; set; }
+        public List<Card> Stack { get { return _stack; } set { _stack = value; } }
+
+        private int _coinPurse;
+        public int CoinPurse { get; set; }
 
         public User(string name, string password) {
+            _amountOfWins = 0;
             _name = name;
             _password = password;
-            _deck = new List<Card>(30);
             _stack = new List<Card>();
-            _coinpurse = 20;
-
+            _coinPurse = 20;
         }
-        public void sellCard(string nameOfCard, int amountOfCards)
+
+        public bool MakeDeck()
         {
-            // TODO: check if player has the card and the amount of cards he wants to sell
-            for (int i = 0; i < amountOfCards; i++)
+            _deck = new List<Card>(30);
+            for (int i = 0; i < _deck.Count; i++)
             {
-                // TODO identify the card and remove it out of the stack
-                //_stack.Remove();
+
             }
+            return true;
         }
-
-
+        public bool LookForBattle()
+        {
+            if(_deck.Count == 30)
+            {
+                //look for game (server)
+                return true;
+            }
+            return false;
+        }
     }
 }

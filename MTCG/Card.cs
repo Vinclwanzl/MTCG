@@ -9,29 +9,50 @@ namespace MTCG
 {
     public enum ElementalTypes
     {
-        WATER,
-        EARTH,
-        FIRE,
-        AIR
+        WATER = 0,
+        EARTH = 1,
+        FIRE = 2,
+        AIR = 3
     }
-    abstract class Card
-    {  
-        private ElementalTypes _elementalType { get; }
-        private string _name { get; }
-        private int _damage { get; }
-        private int _cost { get; }
-        public Card(ElementalTypes elementalType, string name, int cost, int damage) {
+    public abstract class Card
+    {
+        private ElementalTypes _elementalType;
+        public ElementalTypes ElementalType { get { return _elementalType; } }
+        private string _name;
+        public string Name { get { return _name; } }
+
+        private int _damage;
+        public int Damage { get { return _damage; } }
+
+        private int _ShopCost;
+        public int CoinCost { get { return _ShopCost; } }
+
+        private int _ManaCost;
+        public int ManaCost 
+        { 
+            get { return _ManaCost; } 
+            set 
+            {
+                if((_ManaCost + value) < 0)
+                    _ManaCost = 0; 
+                else
+                    _ManaCost += value;
+            }
+        }
+        public Card(ElementalTypes elementalType, int manaCost, string name, int shopCost, int damage) {
             _elementalType = elementalType;
+            _ManaCost = manaCost;
             _name = name;
-            _cost = cost;
+            _ShopCost = shopCost;
             _damage = damage;
         }
 
-        public Card(ElementalTypes elementalType, string name, int cost)
+        public Card(ElementalTypes elementalType, int manaCost, string name, int cost)
         {
             _elementalType = elementalType;
             _name = name;
-            _cost = cost;
+            _ShopCost = cost;
         }
+
     }
 }
