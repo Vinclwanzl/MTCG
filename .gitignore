@@ -361,3 +361,15 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/MTCG/CardGame.csproj
+/MTCG/Battle.cs
+/MTCG/Card.cs
+/MTCG/ClassDiagram.cd
+/MTCG/IHealth.cs
+/MTCG/Monster.cs
+/MTCG/MonsterField.cs
+/MTCG/Package.cs
+/MTCG/Player.cs
+/MTCG/Shop.cs
+/MTCG/Spell.cs
+/MTCG/User.cs
