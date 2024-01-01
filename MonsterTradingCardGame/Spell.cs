@@ -1,9 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.Design;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Transactions;
+using System.Xml.Linq;
 
 namespace MonsterTradingCardGame
 {
@@ -65,6 +68,22 @@ namespace MonsterTradingCardGame
         {
             _spellType = ESpellTypes.TRAP;
             _trapTrigger = trapTrigger;
+        }
+        public override string ToString()
+        {
+            string damageType = " " + Enum.GetName(typeof(EDinoTypes), this.DinoType);
+            switch (_spellType)
+            {
+                case ESpellTypes.NORMAL:
+                    return "Name: " + this.Name + " | Damage: " + this.Damage + damageType + " |Description:" + this.Description + " |Cost: " + this.ShopCost + "|\n";
+                case ESpellTypes.BUFF:
+                    return "Name: " + this.Name + " | Damage: " + this.Damage + damageType + " |Description:" + this.Description + " |Cost: " + this.ShopCost + "|\n";
+                case ESpellTypes.TRAP:
+                    return "Name: " + this.Name + " | Damage: " + this.Damage + damageType + " |Description:" + this.Description + " |Cost: " + this.ShopCost + "|\n";
+                default:
+                    // impossible, because spelltype gets set by default in constructor 
+                    return "ERROR: Spell has no spelltype";
+            }
         }
     }
 }

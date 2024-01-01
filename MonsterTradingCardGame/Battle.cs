@@ -30,7 +30,7 @@ namespace MonsterTradingCardGame
         }
 
         /// <summary>
-        /// 
+        /// Function for starting the Battle
         /// </summary>
         /// <returns>
         /// 3 if the time ran out;
@@ -172,45 +172,46 @@ namespace MonsterTradingCardGame
 
         private double ApplyTypesToDamage(EDinoTypes origin, EDinoTypes target, int amount)
         {
+
             switch (origin)
             {
                 case EDinoTypes.AQUATIC:
                     // weak against 
                     if (target == EDinoTypes.VOLCANIC)
-                        return (double)amount * 0.5;
+                        return (double) amount * 0.5;
                     // strong against
                     else if (target == EDinoTypes.AERIAL)
-                        return (double)amount * 2;
+                        return (double) amount * 2;
                     break;
                 case EDinoTypes.TERRESTRIAL:
                     // weak against 
                     if (target == EDinoTypes.AERIAL)
-                        return (double)amount * 0.5;
+                        return (double) amount * 0.5;
                     // strong against
                     else if (target == EDinoTypes.VOLCANIC)
-                        return (double)amount * 2;
+                        return (double) amount * 2;
                     break;
                 case EDinoTypes.AERIAL:
                     // weak against 
                     if (target == EDinoTypes.AQUATIC)
-                        return (double)amount * 0.5;
+                        return (double) amount * 0.5;
                     // strong against
                     else if (target == EDinoTypes.TERRESTRIAL)
-                        return (double)amount * 2;
+                        return (double) amount * 2;
                     break;
                 case EDinoTypes.VOLCANIC:
                     // weak against 
                     if (target == EDinoTypes.TERRESTRIAL)
-                        return (double)amount * 0.5;
+                        return (double) amount * 0.5;
                     // strong against
                     else if (target == EDinoTypes.AQUATIC)
-                        return (double)amount * 2;
+                        return (double) amount * 2;
                     break;
                 default:
                     // this should not be possible
                     break;
             }
-            return (double)amount;
+            return (double) amount;
         }
         private void recordRoundInLog(string logContent)
         {

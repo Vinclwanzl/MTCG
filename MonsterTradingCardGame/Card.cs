@@ -39,7 +39,7 @@ namespace MonsterTradingCardGame
         }
         public override string ToString()
         {
-            return "Name: " + _name + " | Dinotype: " + _dinoType.ToString() + " | Damage: " + _damage + " | Cost: " + _shopCost + "|";
+            return "Name: " + _name + " | Dinotype: " + Enum.GetName(typeof(EDinoTypes), _dinoType) + " | Damage: " + _damage + " |Description:" + _description + " |Cost: " + _shopCost + "|";
         }
     }
 }
