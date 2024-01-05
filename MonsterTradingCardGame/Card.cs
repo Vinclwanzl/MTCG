@@ -13,8 +13,11 @@ namespace MonsterTradingCardGame
         VOLCANIC = 2,
         AERIAL = 3
     }
-    internal class Card
+    class Card
     {
+        private string _id;
+        public string ID { get { return _id; } }
+
         private EDinoTypes _dinoType;
         public EDinoTypes DinoType { get { return _dinoType; } }
         private string _name;
@@ -29,8 +32,9 @@ namespace MonsterTradingCardGame
         private int _damage;
         public int Damage { get { return _damage; } }
 
-        public Card(EDinoTypes dinoType, string name, string description, int shopCost, int damage)
+        public Card(string id, EDinoTypes dinoType, string name, string description, int shopCost, int damage)
         {
+            _id = id;
             _dinoType = dinoType;
             _name = name;
             _description = description;

@@ -45,15 +45,35 @@ namespace MonsterTradingCardGame
             get { return _coinPurse; }
             set { _coinPurse = value; }
         }
-        public User(string name, string password)
-        {
-            _amountOfWins = 0; // getAmountOfWins(name);
+        public User(string name, string password, bool newUser)
+        { 
             _name = name;
             _password = password;
             _stack = new List<Card>();
-            _cardCompendium = new CardCompendium(); // getCardCompendium(name);
-            _coinPurse = 20;
+            _amountOfWins = getAmountOfWins(name);
+            _cardCompendium = getCardCompendium(name);
+            
+            if (newUser)
+                _coinPurse = 20;
+            else
+                _coinPurse = getCoinPurse(name);
         }
+
+        private int getCoinPurse(string name)
+        {
+            return 69;
+        }
+
+        private CardCompendium getCardCompendium(string name)
+        {
+            return new CardCompendium();
+        }
+
+        private int getAmountOfWins(string name)
+        {
+            return 12;
+        }
+
         public void MakeStack()
         {
             int i = 0;

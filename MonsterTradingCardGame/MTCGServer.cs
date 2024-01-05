@@ -10,42 +10,131 @@ namespace MonsterTradingCardGame
     using System.Globalization;
     using System.IO;
     using System.Net;
+    using System.Net.Http;
     using System.Net.Sockets;
     using System.Security.AccessControl;
+    using System.Text.RegularExpressions;
     using Newtonsoft.Json;
+    using Npgsql;
+
     class MTCGServer
     {
         private static readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
-        
-        public async Task StartServerAsync(string ipAddress, int portNumber)
+        private NpgsqlConnection? _dbConnection;
+        private static readonly object _DatabaseLock = new object();
+
+        public async Task StartServer(string ipAddress, int portNumber, string dbIPAddress, int dbPortNumber)
         {
-            Socket serverSocket = new Socket(
-                AddressFamily.InterNetwork,
-                SocketType.Stream,
-                ProtocolType.Tcp
-            );
-            serverSocket.Bind(
-                new IPEndPoint(
-                    IPAddress.Parse(ipAddress),
-                    portNumber
-                )
-            );
-            serverSocket.Listen(10);
-
-            Console.WriteLine("Server started...");
-
-            while (true)
+            if (IPAddress.TryParse(ipAddress, out IPAddress serverIP)  &&
+                          ValidatePORT(portNumber)                     &&
+                          ValidateIP(dbIPAddress)                      &&
+                          ValidatePORT(dbPortNumber)                   &&
+                          EstablishConnection(dbIPAddress, dbPortNumber))
             {
-                Socket clientSocket = await serverSocket.AcceptAsync();
-                //Socket clientSocket = await serverSocket.AcceptAsync();
-                Console.WriteLine("Client connected.");
+                Socket serverSocket = new Socket(
+                    AddressFamily.InterNetwork,
+                    SocketType.Stream,
+                    ProtocolType.Tcp
+                );
+                serverSocket.Bind(
+                    new IPEndPoint(
+                        serverIP,
+                        portNumber
+                    )
+                );
+                serverSocket.Listen(10);
 
-                // Use a thread pool or async method to handle each client
-                _ = Task.Run(() => HandleClientAsync(clientSocket));
+                Console.WriteLine("Server started...");
+
+                while (true)
+                {
+                    Socket clientSocket = await serverSocket.AcceptAsync();
+                    Console.WriteLine("Client connected.");
+
+                    _ = Task.Run(() => HandleClientAsync(clientSocket));
+                }
+            }
+            else
+            {
+                Console.WriteLine("ERROR occured while starting the server");
+                if (!ValidateIP(dbIPAddress))
+                    Console.WriteLine($"-> the Database ip-address: {dbIPAddress} is invalid!");
+                if (!ValidatePORT(dbPortNumber))
+                    Console.WriteLine($"-> the Database port: {dbPortNumber} is invalid!");
+                if (!ValidateIP(ipAddress))
+                    Console.WriteLine($"-> the Server ip-address: {ipAddress} is invalid!");
+                if (!ValidatePORT(portNumber))
+                    Console.WriteLine($"-> the Server port: {portNumber} is invalid!");
             }
         }
 
-        static async Task HandleClientAsync(Socket clientSocket)
+        private bool EstablishConnection(string dbIPAddress, int dbPortNumber)
+        {
+            Console.WriteLine("Enter the following credentials to connect to the database");
+            Console.WriteLine("The Username of the db Host: ");
+            string username = Console.ReadLine();
+            Console.WriteLine("The Password of the db Host: ");
+            string password = Console.ReadLine();
+
+            string connectionString = $"Host={dbIPAddress}:{dbPortNumber};Username={username};Password={password};Database=mtcgdb";
+
+            _dbConnection = new NpgsqlConnection(connectionString);
+
+            // test the database connection 
+            try
+            {
+                _dbConnection.Open();
+                Console.WriteLine("Database connection was successfully established");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("ERROR: could not connect to Database");
+            }
+            finally 
+            { 
+                _dbConnection.Close(); 
+            }
+            return false;
+        }
+        private bool ExecuteQuerySafely(string sqlCommand, string[] parameterKeys, string[] parameterValues)
+        {
+            if (_dbConnection != null)
+            {
+                try
+                {
+                    _dbConnection.Open();
+                    using (NpgsqlCommand cmd = new NpgsqlCommand(sqlCommand, _dbConnection))
+                    {
+                        for (int i = 0; i < parameterKeys.Length; i++)
+                        {
+                            cmd.Parameters.AddWithValue(parameterKeys[i], parameterValues[i]);
+                        }
+                        using (NpgsqlDataReader reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                // Process the results
+                            }
+                        }
+                    }
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ERROR occured while executing query:\n{ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _dbConnection.Close();
+                }
+            }
+            Console.WriteLine("ERROR: Database Connection has not been established successfully");
+            return false;
+        }
+
+        private async Task HandleClientAsync(Socket clientSocket)
         {
             try
             {
@@ -66,10 +155,7 @@ namespace MonsterTradingCardGame
                 }*/
 
 
-                Console.WriteLine($"Received JSON request:\n{request}");
-
-                // Parse JSON using JSON.NET
-                // JsonObject requestModel = JsonConvert.DeserializeObject<JsonObject>(requestJson);
+                // Console.WriteLine($"Received JSON request:\n{request}");
 
                 // Process the request
                 string response = ProcessRequest(request);
@@ -81,7 +167,6 @@ namespace MonsterTradingCardGame
                 clientSocket.Shutdown(SocketShutdown.Both);
                 clientSocket.Close();
                 Console.WriteLine("Client disconnected.");
-
             }
             catch (Exception e)
             {
@@ -93,7 +178,7 @@ namespace MonsterTradingCardGame
             }
         }
 
-        static string ProcessRequest(string request)
+        private string ProcessRequest(string request)
         {
             if (request == null || request == "")
                 return "ERROR: request input is null or empty";
@@ -101,99 +186,132 @@ namespace MonsterTradingCardGame
             string httpMethod = "", path = "", response = "";
             ExtractHTTPMethodAndPath(request, ref httpMethod, ref path);
 
-            JsonObject jsonData = new();
+            if (!CheckStringForEmptiness(httpMethod))
+                return "Could not extract HTTP method";
+            if (!CheckStringForEmptiness(path))
+                return "Could not extract path";
 
-            if (request.Contains("Content-Type: application/json"))
-            { 
-                if(!(response = ExtractJsonData(request)).Contains("ERROR"))
-                    jsonData = JsonConvert.DeserializeObject<JsonObject>(ExtractJsonData(response));
-                else
-                    Console.WriteLine(response);
-                response = "";
-            }
+            // serialization test bellow (ignore)
+            /*Spell spell = new("hallo -id", EDinoTypes.TERRESTRIAL, "Glas Wasser", "Wasserglas", 20, 2000);
+            string jsonString = JsonConvert.SerializeObject(spell);
+            Console.WriteLine(jsonString);*/
 
-            switch (httpMethod+path)
+            string jsonAsString = "";
+            if (request.Contains("Content-Type: application/json")        &&
+                (jsonAsString = ExtractJsonData(request)).Contains("ERROR"))
             {
-                case "POST/users":
-                    response = HandlePOSTRequest(path);
+                Console.WriteLine(jsonAsString);
+                return "The supplied Json had caused an ERROR, please check your JSON input";
+            }
+            switch (httpMethod)
+            {
+                case "POST":
+                    response = HandlePOSTRequest(path, jsonAsString);
                     break;
 
-                case $"GET/users/"/*{username}*/:
-                    response = HandlePOSTRequest(path);
+                case "GET":
+                    response = HandleGETRequest(path, jsonAsString);
                     break;
 
-                case $"PUT/users/"/*{username}*/:
-                    response = HandlePOSTRequest(path);
+                case "PUT":
+                    response = HandlePUTRequest(path, jsonAsString);
                     break;
-
-                case "POST/sessions":
-                    response = HandlePOSTRequest(path);
+                case "DELETE":
+                    response = HandleDELETERequest(path, jsonAsString);
                     break;
-
-                case "POST/packages":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "POST/transactions/packages":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "GET/cards":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "GET/deck":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "PUT/deck":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "GET/deck?format=plain":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "GET/stats":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "GET/scoreboard":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "POST/battles":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "GET/tradings":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case "POST/tradings":
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case $"DELETE/tradings/"/*{id}*/:
-                    response = HandlePOSTRequest(path);
-                    break;
-
-                case $"POST/tradings/"/*{id}"*/:
-                    response = HandlePOSTRequest(path);
-                    break;
-
                 default:
-                    // TODO: if cases with dynmatic values don't work make ifelseifelseifelse spaggethi here
-                    response = "Unhandled request";
+                    response =  "HTTPMETHOD is not in the api spec";
                     break;
             }
             return response;
         }
-        private static string HandlePOSTRequest(string path)
+        private static string HandlePOSTRequest(string path, string jsonAsString)
         {
+            switch (path)
+            {
+                case $"/users":
+                    return "201";
+                case "/tradings":
+                    return "";
+                case "/battles":
+                    return "";
+                case "/transactions/packages":
+                    return "";
+                case "/packages":
+                    return "";
+                case "/sessions":
+                    return "";
+                default:
+                    if(path.Contains("/tradings/"))
+                    {
+                        string tradeID = GetDynamicInputFromPath(path);
+                        return "";
+                    }
+                    else return "Unknown path For POST HTTP-method";
+            }
+        }
+        private string HandleGETRequest(string path, string jsonAsString)
+        {
+            switch (path)
+            {
+                case "/tradings":
 
-            // TODO figure out if that is the pattern I want
-            return "POST bekommen :^)";
+                    return "";
+
+                case "/scoreboard":
+
+                    return "";
+
+                case "/stats":
+
+                    return "";
+
+                case "/deck?format=plain":
+
+                    return "";
+
+                case "/deck":
+
+                    return "";
+
+                case "/cards":
+
+                    return "";
+
+                default:
+                    if (path.Contains("/users/"))
+                    {
+                        string username = GetDynamicInputFromPath(path);
+                        return "";
+                    }
+                    else return "Unknown path For GET HTTP-method";
+            }
+        }
+        private string HandlePUTRequest(string path, string jsonAsString)
+        {
+            if (path == "/deck")
+            {
+                return "";
+            }
+            else if (path.Contains("/users/"))
+            {
+                string username = GetDynamicInputFromPath(path);
+                return "";
+            }
+            else return "Unknown path for PUT HTTP-method";
+        }
+        private string HandleDELETERequest(string path, string jsonAsString)
+        {
+            if (path.Contains("/tradings/"))
+            {
+                string id = GetDynamicInputFromPath(path);
+                return "200";
+            } 
+            else return "Unknown path for DELETE HTTP-method";
+        }
+        private static string GetDynamicInputFromPath(string path)
+        {
+            return path[(path.LastIndexOf('/') + 1) .. (path.Length - 1)];
         }
 
         /// <summary>
@@ -212,16 +330,17 @@ namespace MonsterTradingCardGame
 
             for (int i = lengthHelper + 16;
                      i < request.Length && 
-                     request[i] != 13; i++)
+                     request[i] != (char) 13; i++)
             
                 lengthAsString += request[i];
             
             // Underneath lengthHelper is used to save the length of Json data
             if (!int.TryParse(lengthAsString, out lengthHelper))
                 return "PARSING-ERROR: Could not Parse Content-Length";
-
-            return request[(request.Length - (1 + lengthHelper))..(request.Length - 1)];
+            Console.WriteLine($"\n{request[(2 + request.Length - ( lengthHelper))..(request.Length - 2)]/*.Replace("\\", string.Empty)*/}\n");
+            return request[(request.Length - ( lengthHelper))..(request.Length - 2)]/*.Replace("\\", string.Empty)*/; 
         }
+
         /// <summary>
         /// 
         /// </summary>
@@ -242,12 +361,20 @@ namespace MonsterTradingCardGame
                     Path += request[i];
             }
         }
-        public class JsonObject
+        public static bool ValidatePORT(int input)
         {
-            //public string Method { get; set; }
-            public string Name { get; set; }
-            public string Password { get; set; }
-            // Add other properties as needed
+            return (0 <= input && input <= 65535);
+        }
+        public static bool ValidateIP(string input)
+        {
+            if (!CheckStringForEmptiness(input))
+                return false;
+            IPAddress _;
+            return IPAddress.TryParse(input, out _);
+        }
+        public static bool CheckStringForEmptiness(string input)
+        {
+            return (input != null && input != "");
         }
     }
 }

@@ -48,10 +48,10 @@ namespace MonsterTradingCardGame
                 if (_player1 == null &&
                     _player2 == null) 
                     return -3;
-                else if (_player1 == null) 
-                    return -1;
-                else 
+                else if (_player2 == null) 
                     return -2;
+                else 
+                    return -1;
             }
 
             Random rdm = new Random();
@@ -114,44 +114,49 @@ namespace MonsterTradingCardGame
         private double HandleCard(string dinomancer, Card cardOfDinomancer, ref Buffs buffs, Card cardOfEnemy)
         { 
             double damage = cardOfDinomancer.Damage;
-            string damageType = " " + Enum.GetName(typeof(EDinoTypes), cardOfDinomancer.DinoType) + " damage";
-            if (cardOfDinomancer is Monster dino)
+            switch (cardOfDinomancer)
             {
-                recordRoundInLog(dinomancer + " summons " + dino.Name + " that deals " + damage + damageType);
-                if (buffs.BuffExists)
-                {
-                    damage += AddBuffsToDamage(buffs, dino.DinoType, dinomancer);
-                    recordRoundInLog(dinomancer + "'s dino " + dino.Name + " now deals " + damage + damageType);
-                }
-            }
-            else if (cardOfDinomancer is Spell spell) 
-            {
-                damage = ApplyTypesToDamage(spell.DinoType, cardOfDinomancer.DinoType, spell.Damage);
-                switch (spell.SpellType)
-                {
-                    case ESpellTypes.NORMAL:
-                        recordRoundInLog(dinomancer + " casts the Spell " + spell.Name + " dealing " + spell.Damage + damageType);
+                case Monster dino:
+                    recordRoundInLog($"{dinomancer} summons {dino.Name} a {Enum.GetName(typeof(EDinoTypes), cardOfDinomancer.DinoType)} dino that deals {damage} damage");
+                    if (buffs.BuffExists)
+                    {
+                        damage += AddBuffsToDamage(buffs, dino.DinoType, dinomancer);
+                        recordRoundInLog($"{dinomancer}'s dino {dino.Name} now deals a total of {damage}");
+                    }
+                    break;
+                case Spell spell:
+                    string damageType = $" {Enum.GetName(typeof(EDinoTypes), spell.DinoType)} damage";
+                    damage = ApplyTypesToDamage(spell.DinoType, cardOfDinomancer.DinoType, spell.Damage);
+                    switch (spell)
+                    {
+                    case BuffSpell buffSpell:
+                        recordRoundInLog($"{dinomancer} casts the Buff Spell {buffSpell.Name} dealing {buffSpell.Damage + damageType} and buffing all Monsters by {buffSpell.BuffAmount + damageType}");
+                        buffs.AddBuff(spell.DinoType, buffSpell.BuffAmount);
                         break;
-                    case ESpellTypes.BUFF:
-                        recordRoundInLog(dinomancer + " casts the Buff Spell " + spell.Name + " dealing " + spell.Damage + damageType + " and buffing all Monsters by " + spell.BuffAmount + damageType);
-                        buffs.AddBuff(spell.DinoType, spell.BuffAmount);
-                        break;
-                    case ESpellTypes.TRAP:
+                    case TrapSpell trapspell:
                         if (cardOfEnemy is Spell)
                         {
-                            if (spell.TrapTrigger == cardOfEnemy.DinoType)
+                            if (trapspell.TrapTrigger == cardOfEnemy.DinoType)
                             {
                                 damage *= 2;
-                                recordRoundInLog(dinomancer + " casts the Trap Spell " + spell.Name + ", which was successfully triggered, thus dealing " + spell.Damage + damageType);
+                                recordRoundInLog($"{dinomancer} casts the Trap Spell {trapspell.Name}, which was successfully triggered, thus dealing {spell.Damage + damageType}");
                             }
                             else
                             {
                                 damage *= 0.5;
-                                recordRoundInLog(dinomancer + " casts the Trap Spell " + spell.Name + ", which failed to triggered, thus dealing " + spell.Damage + damageType);
+                                recordRoundInLog($"{dinomancer} casts the Trap Spell {trapspell.Name}, which failed to triggered, thus dealing {spell.Damage + damageType}");
                             }
                         }
                         break;
-                }
+                    default:
+                        recordRoundInLog($"{dinomancer} casts the Spell {spell.Name} dealing {spell.Damage + damageType}");
+                        break;
+                    }
+                    break;
+
+                default:
+                    Console.WriteLine("ERROR: CARD is neither MONSTER nor SPELL "); 
+                    break;
             }
             return damage;
         }
@@ -164,7 +169,7 @@ namespace MonsterTradingCardGame
                 buff += ApplyTypesToDamage(buffs.BuffTypes[i],
                                            targetsType,
                                            buffs.BuffAmount[i]);
-                recordRoundInLog(dinomancer + " buffs their dino by " + buffs.BuffAmount[i] + " " + Enum.GetName(typeof(EDinoTypes), buffs.BuffTypes[i]) + " damage");
+                recordRoundInLog($"{dinomancer} buffs their dino by {buffs.BuffAmount[i]} {Enum.GetName(typeof(EDinoTypes), buffs.BuffTypes[i])} damage");
             }
             buffs.RemoveBuffs();
             return buff;
@@ -215,8 +220,9 @@ namespace MonsterTradingCardGame
         }
         private void recordRoundInLog(string logContent)
         {
-            Console.WriteLine("Round: " + _roundNumber + "\t| " + logContent + ".\n");
-            _battleLog += "Round: " + _roundNumber + "\t| " + logContent + ".\n";
+            string round = $"Round: {_roundNumber}\t| {logContent}.\n";
+            Console.WriteLine(round);
+            _battleLog += round;
         }
     }
 
