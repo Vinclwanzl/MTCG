@@ -15,8 +15,6 @@ namespace MonsterTradingCardGame
         private User _player2;
         public User Player2 { get { return _player2; } }
 
-        
-
         private string _battleLog;
         public string BattleLog { get { return _battleLog; } }
 
@@ -25,7 +23,7 @@ namespace MonsterTradingCardGame
         {
             _player1 = player1;
             _player2 = player2;
-            _battleLog = "Battle Started";
+            _battleLog = $"Battle betwenn {_player1.Name} and {_player2.Name} Started\n";
             _roundNumber = 0;
         }
 
@@ -40,18 +38,18 @@ namespace MonsterTradingCardGame
         /// -2 if _player2 is null;
         /// -3 if both players are null;
         /// </returns>
-        public int StartBattle()
+        public string StartBattle()
         {
             if (_player1 == null ||
                 _player2 == null)
             {
                 if (_player1 == null &&
                     _player2 == null) 
-                    return -3;
+                    return "both players are null";
                 else if (_player2 == null) 
-                    return -2;
+                    return "player2 is null";
                 else 
-                    return -1;
+                    return "player1 is null";
             }
 
             Random rdm = new Random();
@@ -97,18 +95,18 @@ namespace MonsterTradingCardGame
                     if (_player1.Deck.Count <= 0)
                     {
                         recordRoundInLog(_player1.Name + " won the Battle!");
-                        return 1;
+                        return _player1.Name;
                     }
                     else
                     {
                         recordRoundInLog(_player2.Name + " won the Battle!");
-                        return 2;
+                        return _player2.Name;
                     }
                 }
                 ++_roundNumber;
             }
             recordRoundInLog("The Battle took 100 rounds! it ended in a stalemate");
-            return 0;
+            return "Nobody";
         }
 
         private double HandleCard(string dinomancer, Card cardOfDinomancer, ref Buffs buffs, Card cardOfEnemy)
