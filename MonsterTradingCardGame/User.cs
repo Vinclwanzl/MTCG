@@ -18,7 +18,7 @@ namespace MonsterTradingCardGame
         }
 
         private string _password;
-        private string Password 
+        protected string Password 
         { 
             get { return _password; } 
             set { _password = value; } 
@@ -29,14 +29,14 @@ namespace MonsterTradingCardGame
             get { return _cardCompendium; } 
             set { _cardCompendium = value; } 
         }
-        private List<Card> _stack;
-        public List<Card> Stack 
+        private List<Card> _deck;
+        public List<Card> Deck 
         { 
-            get { return _stack; } 
+            get { return _deck; } 
             set 
             { 
                 if(value != null)
-                    _stack = value; 
+                    _deck = value; 
             } 
         }
         private int _coinPurse;
@@ -49,7 +49,7 @@ namespace MonsterTradingCardGame
         { 
             _name = name;
             _password = password;
-            _stack = new List<Card>();
+            _deck = new List<Card>();
             _amountOfWins = getAmountOfWins(name);
             _cardCompendium = getCardCompendium(name);
             
@@ -97,7 +97,7 @@ namespace MonsterTradingCardGame
 
                 if (_cardCompendium.CardList[choice] != null)
                 {
-                    Stack.Add(_cardCompendium.CardList[choice]);
+                    Deck.Add(_cardCompendium.CardList[choice]);
                     _cardCompendium.CardList.Remove(_cardCompendium.CardList[choice]);
                     ++i;
                 }

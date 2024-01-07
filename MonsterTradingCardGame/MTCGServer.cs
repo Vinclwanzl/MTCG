@@ -7,22 +7,33 @@ namespace MonsterTradingCardGame
 {
     using System;
     using System.ComponentModel.Design;
+    using System.Data;
+    using System.Drawing;
     using System.Globalization;
     using System.IO;
     using System.Net;
     using System.Net.Http;
     using System.Net.Sockets;
     using System.Security.AccessControl;
+    using System.Text.Json.Nodes;
     using System.Text.RegularExpressions;
+    using System.Xml.Linq;
     using Newtonsoft.Json;
+    using Newtonsoft.Json.Linq;
     using Npgsql;
+    using static System.Runtime.InteropServices.JavaScript.JSType;
+    using static Npgsql.Replication.PgOutput.Messages.RelationMessage;
 
     class MTCGServer
     {
         private static readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
-        private NpgsqlConnection? _dbConnection;
-        private static readonly object _DatabaseLock = new object();
 
+        private static object _DataBaseLock = new object();
+        private NpgsqlConnection? _dbConnection;
+
+        private static object _TokenLock = new object();
+        private static Dictionary<string, DateTime> _userTokensD = new Dictionary<string, DateTime>();
+        private readonly int _TOKENACTIVITYTIMER = 300000;
         public async Task StartServer(string ipAddress, int portNumber, string dbIPAddress, int dbPortNumber)
         {
             if (IPAddress.TryParse(ipAddress, out IPAddress serverIP)  &&
@@ -54,7 +65,7 @@ namespace MonsterTradingCardGame
                     _ = Task.Run(() => HandleClientAsync(clientSocket));
                 }
             }
-            else
+            else 
             {
                 Console.WriteLine("ERROR occured while starting the server");
                 if (!ValidateIP(dbIPAddress))
@@ -67,73 +78,123 @@ namespace MonsterTradingCardGame
                     Console.WriteLine($"-> the Server port: {portNumber} is invalid!");
             }
         }
-
+        // DATABASE CONNECTION FUNCTIONS:
         private bool EstablishConnection(string dbIPAddress, int dbPortNumber)
         {
-            Console.WriteLine("Enter the following credentials to connect to the database");
-            Console.WriteLine("The Username of the db Host: ");
+            Console.WriteLine("Enter the following credentials of a DB-User with CONNECT permission:");
+            Console.WriteLine("Username:");
             string username = Console.ReadLine();
-            Console.WriteLine("The Password of the db Host: ");
+            Console.WriteLine("Password:");
             string password = Console.ReadLine();
 
             string connectionString = $"Host={dbIPAddress}:{dbPortNumber};Username={username};Password={password};Database=mtcgdb";
 
-            _dbConnection = new NpgsqlConnection(connectionString);
+            lock (_DataBaseLock)
+            {
+                _dbConnection = new NpgsqlConnection(connectionString);
 
-            // test the database connection 
-            try
-            {
-                _dbConnection.Open();
-                Console.WriteLine("Database connection was successfully established");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("ERROR: could not connect to Database");
-            }
-            finally 
-            { 
-                _dbConnection.Close(); 
-            }
-            return false;
-        }
-        private bool ExecuteQuerySafely(string sqlCommand, string[] parameterKeys, string[] parameterValues)
-        {
-            if (_dbConnection != null)
-            {
+                // test the database connection 
                 try
                 {
                     _dbConnection.Open();
-                    using (NpgsqlCommand cmd = new NpgsqlCommand(sqlCommand, _dbConnection))
-                    {
-                        for (int i = 0; i < parameterKeys.Length; i++)
-                        {
-                            cmd.Parameters.AddWithValue(parameterKeys[i], parameterValues[i]);
-                        }
-                        using (NpgsqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            while (reader.Read())
-                            {
-                                // Process the results
-                            }
-                        }
-                    }
+                    Console.WriteLine("Database connection was successfully established");
                     return true;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"ERROR occured while executing query:\n{ex.Message}");
-                    return false;
+                    Console.WriteLine("ERROR: could not connect to Database");
                 }
                 finally
                 {
                     _dbConnection.Close();
                 }
+                return false;
+            }
+        }
+        private string ExecuteSQLCodeSanitized(string sqlCommand, Dictionary<string, string> parameterD)
+        {
+            lock (_DataBaseLock)
+            {
+                if (_dbConnection != null)
+                {
+                    try
+                    {
+                        _dbConnection.Open();
+                        using (NpgsqlCommand cmd = new NpgsqlCommand(sqlCommand, _dbConnection))
+                        {
+                            Console.WriteLine("\n Commmand: " + sqlCommand + "\n");
+                            foreach (var parameter in parameterD)
+                            {
+                                cmd.Parameters.AddWithValue(parameter.Key, parameter.Value);
+                                //Console.WriteLine(parameter.Key + " : " + parameter.Value);
+                            }
+                            if (sqlCommand.Contains("SELECT"))
+                            {
+                                using (NpgsqlDataAdapter dataAdapter = new NpgsqlDataAdapter(cmd))
+                                {
+                                    DataSet dataSet = new DataSet();
+
+                                    dataAdapter.Fill(dataSet);
+
+                                    string jsonString = JsonConvert.SerializeObject(dataSet, Formatting.Indented);
+                                    return dataAdapter.ToString();
+                                }
+                            }
+                            else
+                                return "" + cmd.ExecuteNonQuery();
+
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"ERROR: occured while inserting data:\n{ex.Message}");
+                        return ex.Message;
+                    }
+                    finally
+                    {
+                        _dbConnection.Close();
+                    }
+                }
             }
             Console.WriteLine("ERROR: Database Connection has not been established successfully");
-            return false;
+            return "We are facing database issues right now";
         }
 
+        // TOKEN HANDLING FUNCTIONS:
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="userToken"></param>
+        /// <returns></returns>
+        private static void SetToken(string userToken)
+        {
+            lock (_TokenLock)
+            {
+                if (_userTokensD.ContainsKey(userToken))
+                    _userTokensD[userToken] = DateTime.Now;
+                else
+                    _userTokensD.Add(userToken, DateTime.Now);
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// 
+        /// </summary>
+        /// <param name="userToken"></param>
+        /// <returns></returns>
+        private bool IsTokenActive(string userToken)
+        {
+            lock (_TokenLock)
+            {
+                return (_userTokensD.ContainsKey(userToken)                                             &&
+                       (_userTokensD[userToken] - DateTime.Now).TotalMilliseconds > _TOKENACTIVITYTIMER );
+            }
+
+        }
+
+        // HTTP COMMUNICATION FUNCTION:
         private async Task HandleClientAsync(Socket clientSocket)
         {
             try
@@ -146,18 +207,16 @@ namespace MonsterTradingCardGame
                 string request = Encoding.UTF8.GetString(buffer, 0, length);
 
 
-                /*for (int i = 0; i < request.Length; i++)
+                for (int i = 0; i < request.Length; i++)
                 {
                     if (request[i] == ' ')
                         Console.WriteLine(i + ":\t' '--> " + (int)request[i]);
                     else
                         Console.WriteLine(i + ":\t" + request[i] + " --> " + (int)request[i]);
-                }*/
+                }
 
+                Console.WriteLine($"Received request:\n{request}");
 
-                // Console.WriteLine($"Received JSON request:\n{request}");
-
-                // Process the request
                 string response = ProcessRequest(request);
                 byte[] responseBytes = Encoding.UTF8.GetBytes(response);
                 await clientSocket.SendAsync(new ArraySegment<byte>(responseBytes), SocketFlags.None);
@@ -178,203 +237,361 @@ namespace MonsterTradingCardGame
             }
         }
 
+        // HTTP-REQUEST PROCESSING FUNCTIONS:
         private string ProcessRequest(string request)
         {
-            if (request == null || request == "")
-                return "ERROR: request input is null or empty";
+            string errmsg;
 
-            string httpMethod = "", path = "", response = "";
-            ExtractHTTPMethodAndPath(request, ref httpMethod, ref path);
+            if (string.IsNullOrEmpty(request))
+                return "ERROR: request is null or empty";
 
-            if (!CheckStringForEmptiness(httpMethod))
-                return "Could not extract HTTP method";
-            if (!CheckStringForEmptiness(path))
-                return "Could not extract path";
+            if ((errmsg = ExtractHTTPdata(request, out Dictionary<string, string> httpDataD)) != "")
+                return errmsg;
 
             // serialization test bellow (ignore)
             /*Spell spell = new("hallo -id", EDinoTypes.TERRESTRIAL, "Glas Wasser", "Wasserglas", 20, 2000);
             string jsonString = JsonConvert.SerializeObject(spell);
             Console.WriteLine(jsonString);*/
 
-            string jsonAsString = "";
-            if (request.Contains("Content-Type: application/json")        &&
-                (jsonAsString = ExtractJsonData(request)).Contains("ERROR"))
+            Dictionary<string, string> Dparameters = new();
+            if (httpDataD.TryGetValue("JSON-Data", out string jsonAsString))
             {
-                Console.WriteLine(jsonAsString);
-                return "The supplied Json had caused an ERROR, please check your JSON input";
+                if (jsonAsString.Contains("["))
+                {
+                    JArray jsonData;
+                    // this check is probably overkill
+                    if ((jsonData = (JArray) JsonConvert.DeserializeObject(jsonAsString)) == null)
+                        return "ERROR: the provided JSON couldn't be deserialized, please check the Syntax";
+
+                    if ((Dparameters = GetParametersFromJsonArray(jsonData, httpDataD["path"])) == null)
+                        return "ERROR: the parameters of the provided JSON couldn't be parsed";
+                }
+                else
+                {
+                    JObject jsonData; 
+                    // this check is probably overkill
+                    if ((jsonData = (JObject) JsonConvert.DeserializeObject(jsonAsString)) == null)
+                        return "ERROR: the provided JSON couldn't be deserialized, please check the Syntax";
+
+                    if ((Dparameters = GetParametersFromJsonObject(jsonData)) == null)
+                        return "ERROR: the parameters of the provided JSON couldn't be parsed";
+                }
             }
-            switch (httpMethod)
+
+            switch (httpDataD["HTTP-method"])
             {
                 case "POST":
-                    response = HandlePOSTRequest(path, jsonAsString);
-                    break;
-
+                    return HandlePOSTRequest(httpDataD["path"], Dparameters);
                 case "GET":
-                    response = HandleGETRequest(path, jsonAsString);
-                    break;
-
+                    return HandleGETRequest(httpDataD["path"], Dparameters);
                 case "PUT":
-                    response = HandlePUTRequest(path, jsonAsString);
-                    break;
+                    return HandlePUTRequest(httpDataD["path"], Dparameters);
                 case "DELETE":
-                    response = HandleDELETERequest(path, jsonAsString);
-                    break;
+                    return HandleDELETERequest(httpDataD["path"], Dparameters);
                 default:
-                    response =  "HTTPMETHOD is not in the api spec";
-                    break;
+                    return "ERROR: HTTPMETHOD is not in the api spec";
             }
-            return response;
         }
-        private static string HandlePOSTRequest(string path, string jsonAsString)
+
+        private string HandlePOSTRequest(string path, Dictionary<string, string> parameterD)
         {
+            string sqlStatement;
             switch (path)
             {
                 case $"/users":
-                    return "201";
+                    sqlStatement = "INSERT INTO player (username, password, coinpurse) VALUES (@username, @password, 20);";
+                    return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
                 case "/tradings":
-                    return "";
+                    if (IsTokenActive(parameterD["username"]))
+                    {
+                        sqlStatement = "INSERT INTO trade (tradeID, cardID, username, mindamage)\r\nVALUES (@tradeID, @cardID, @username, @minDamage);";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    }
+                    else
+                        return "401";
                 case "/battles":
-                    return "";
+                    // gaaaaanz wichtiges TODO
+                    if (IsTokenActive(parameterD["username"]))
+                    {
+                        sqlStatement = "SELECT * FROM PLAYER";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    }
+                    else
+                        return "401";
                 case "/transactions/packages":
-                    return "";
+                    if (IsTokenActive(parameterD["username"]))
+                    {
+                        sqlStatement = $"SELECT coinpurse FROM player WHERE username = @username";
+                        if (int.TryParse(ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int coins) &&
+                            coins > 5)
+                        {
+                            sqlStatement = "SELECT COUNT(*) FROM package;";
+                            if (int.TryParse(ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int amountOfPackages) &&
+                               amountOfPackages > 0)
+                            {
+                                coins -= 5;
+                                sqlStatement = $"UPDATE player SET coinpurse = {coins} WHERE username = @username;";
+                                ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                                return "200";
+                            }
+                            else
+                                return "404";
+                        }
+                        else
+                            return "403";
+                    }
+                    else
+                        return "401";
                 case "/packages":
-                    return "";
+                    if (!IsTokenActive(parameterD["username"]))
+                        return "401";
+                    
+                    if (!(parameterD["username"] == "admin"))
+                        return "403";
+
+                    bool cardAlreadyExisted = false;
+                    sqlStatement = "INSERT INTO package (cardAsJson1, cardAsJson2, cardAsJson3, cardAsJson4, cardAsJson5) VALUES (@cardasjson1, @cardasjson2, @cardasjson3, @cardasjson4, @cardasjson5);";
+
+                    ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    
+                    
+                    sqlStatement = "INSERT INTO package (cardAsJson1, cardAsJson2, cardAsJson3, cardAsJson4, cardAsJson5) VALUES (@cardasjson1, @cardasjson2, @cardasjson3, @cardasjson4, @cardasjson5);";
+                    
+                    // TODO: place cards into database
+
+                    if (cardAlreadyExisted)
+                        return "409";
+                    else
+                        return "201";
+                    
+
                 case "/sessions":
-                    return "";
+                    sqlStatement = "SELECT COUNT(*) FROM player WHERE username = @username AND password = @password;";
+
+                    if (int.TryParse(ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int result) &&
+                        result > 0                                                                       )
+                    {
+                        SetToken(parameterD["username"]);
+                        return "200";
+                    }
+                    else
+                    {
+                        return "401";
+                    }
+
                 default:
                     if(path.Contains("/tradings/"))
                     {
-                        string tradeID = GetDynamicInputFromPath(path);
-                        return "";
+                        string tradeID = GetDynamicDataFromPath(path);
+                        sqlStatement = "";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
                     }
                     else return "Unknown path For POST HTTP-method";
             }
         }
-        private string HandleGETRequest(string path, string jsonAsString)
+        private string HandleGETRequest(string path, Dictionary<string, string> parameterD)
         {
-            switch (path)
+            if (IsTokenActive(parameterD["username"]))
             {
-                case "/tradings":
+                string sqlStatement;
+                switch (path)
+                {
+                    case "/tradings":
+                        sqlStatement = "SELECT * FROM trade;";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
-                    return "";
+                    case "/scoreboard":
+                        // TODO: get username from username
+                        sqlStatement = "SELECT * FROM scoreboard ORDER BY amountofwins DESC;";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
-                case "/scoreboard":
+                    case "/stats":
+                        // TODO: get username from username
+                        sqlStatement = "SELECT * FROM scoreboard WHERE username = @username;";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
-                    return "";
+                    case "/deck?format=plain":
+                        // TODO: get username from username
+                        sqlStatement = "SELECT * FROM scoreboard WHERE username = @username;";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
-                case "/stats":
+                    case "/deck":
+                        // TODO: get username from username
+                        sqlStatement = "SELECT cardID1, cardID2, cardID3, cardID4 FROM deck WHERE username = @username;";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
-                    return "";
+                    case "/cards":
+                        // TODO: get username from username
+                        sqlStatement = "SELECT c.cardAsJson FROM cardcompendium cc, cards c WHERE  c.cardID = cc.cardID AND username = @username;";
+                        return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
-                case "/deck?format=plain":
-
-                    return "";
-
-                case "/deck":
-
-                    return "";
-
-                case "/cards":
-
-                    return "";
-
-                default:
-                    if (path.Contains("/users/"))
-                    {
-                        string username = GetDynamicInputFromPath(path);
-                        return "";
-                    }
-                    else return "Unknown path For GET HTTP-method";
+                    default:
+                        if (path.Contains("/users/"))
+                        {
+                            
+                            parameterD.Add("username", GetDynamicDataFromPath(path));
+                            sqlStatement = "SELECT * FROM player WHERE username = @username;";
+                            return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                            
+                        }
+                        else
+                            return "Unknown path For GET HTTP-method";
+                }
             }
+            else
+                return "Unknown path For GET HTTP-method";
         }
-        private string HandlePUTRequest(string path, string jsonAsString)
+        private string HandlePUTRequest(string path, Dictionary<string, string> parameterD)
         {
+            string sqlStatement;
             if (path == "/deck")
             {
-                return "";
+                // TODO: get username from username
+                sqlStatement = "UPDATE deck SET cardID1 = @cardid1, cardID2 = @cardid2, cardID3 = @cardid3, cardID4 = @CardID4 WHERE username = @username;";
+                return ExecuteSQLCodeSanitized(sqlStatement, parameterD); 
             }
             else if (path.Contains("/users/"))
             {
-                string username = GetDynamicInputFromPath(path);
-                return "";
+                string username = GetDynamicDataFromPath(path);
+                sqlStatement = $"UPDATE player SET password = @password, bio = @bio, image = @image WHERE username = {username};";
+                return ExecuteSQLCodeSanitized(sqlStatement, parameterD);    
             }
             else return "Unknown path for PUT HTTP-method";
         }
-        private string HandleDELETERequest(string path, string jsonAsString)
+        private string HandleDELETERequest(string path, Dictionary<string, string> parameterD)
         {
             if (path.Contains("/tradings/"))
             {
-                string id = GetDynamicInputFromPath(path);
-                return "200";
-            } 
+                if (IsTokenActive(parameterD["username"]))
+                {
+                    string id = GetDynamicDataFromPath(path);
+                    string sqlStatement = $"DELETE FROM trade WHERE tradeID = {id};";
+                    return ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                }
+                else
+                    return "401";
+            }   
             else return "Unknown path for DELETE HTTP-method";
         }
-        private static string GetDynamicInputFromPath(string path)
+        // JSON HANDLER FUNCTIONS:
+        public Dictionary<string, string> GetParametersFromJsonObject(JObject jsonData)
         {
-            return path[(path.LastIndexOf('/') + 1) .. (path.Length - 1)];
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="request"></param>
-        /// <returns>Returns json data as string and an ERROR-message otherwise
-        private static string ExtractJsonData(string request) 
-        {
-            string lengthAsString = "";
-            int lengthHelper;
-
-            // Underneath lengthHelper is used to capture the index of "Content-Length: "
-            if ((lengthHelper = request.IndexOf("Content-Length: ")) == -1)
-                return "FORMATTING-ERROR: Content-Length Field was not found";
-
-            for (int i = lengthHelper + 16;
-                     i < request.Length && 
-                     request[i] != (char) 13; i++)
-            
-                lengthAsString += request[i];
-            
-            // Underneath lengthHelper is used to save the length of Json data
-            if (!int.TryParse(lengthAsString, out lengthHelper))
-                return "PARSING-ERROR: Could not Parse Content-Length";
-            Console.WriteLine($"\n{request[(2 + request.Length - ( lengthHelper))..(request.Length - 2)]/*.Replace("\\", string.Empty)*/}\n");
-            return request[(request.Length - ( lengthHelper))..(request.Length - 2)]/*.Replace("\\", string.Empty)*/; 
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="request"></param>
-        /// <param name="HTTPMethod"></param>
-        /// <param name="Path"></param>
-        /// <returns>returns HTTPMethod and path, as strings through the ref parameters HTTPMethod and path</returns>
-        private static void ExtractHTTPMethodAndPath(string request, ref string HTTPMethod, ref string Path)
-        {
-            int fieldIndex = 0;
-            for (int i = 0; i < request.Length && fieldIndex < 3; i++)
+            var parameterD = new Dictionary<string, string>();
+            foreach (var property in jsonData.Properties())
             {
-                if (request[i] == ' ')    
-                    ++fieldIndex;
-                else if (fieldIndex == 0) 
-                    HTTPMethod += request[i];
-                else if (fieldIndex == 1) 
-                    Path += request[i];
+                parameterD.Add(property.Name.ToLower(), property.Value.ToString());
             }
+
+            return parameterD;
         }
-        public static bool ValidatePORT(int input)
+        public Dictionary<string, string> GetParametersFromJsonArray(JArray jsonArray, string path)
+        {
+            var parameterD = new Dictionary<string, string>();
+            if (path == "/packages")
+            {
+                int index = 1;
+                foreach (JObject element in jsonArray)
+                {
+                    parameterD.Add("cardasjson" + index++, element.ToString());
+                }
+            }
+            else
+            {
+                for (int i = 0; i < jsonArray.Count; i++)
+                {
+                    parameterD.Add("cardID"+(i+1), jsonArray[i].ToString());
+                }
+            }
+
+            return parameterD;
+        }
+
+        // STRING PARSING FUNCTIONS:
+        public static string GetDynamicDataFromPath(string path)
+        {
+            return path[(path.LastIndexOf('/') + 1)..(path.Length - 1)];
+        }
+
+        public string ExtractHTTPdata(string request, out Dictionary<string, string> httpDataD)
+        {
+            Dictionary<string, string> outputD = new Dictionary<string, string>();
+            httpDataD = outputD;
+            string httpMethod = "", path = "";
+
+            int indexHelper = 0;
+
+            for (int i = 0; i < request.Length && indexHelper < 3; i++)
+            {
+                if (request[i] == ' ')
+                    ++indexHelper;
+                else if (indexHelper == 0)
+                    httpMethod += request[i];
+                else if (indexHelper == 1)
+                    path += request[i];
+            }
+            outputD.Add("HTTP-method", httpMethod);
+            outputD.Add("path", path);
+            httpDataD = outputD;
+
+            if (request.Contains("Authorization: Bearer "))
+            {
+                
+                string username = "";
+                string restOftheToken = "";
+                bool minusHasBeenReached = false;
+
+                if ((indexHelper = request.IndexOf("Authorization: Bearer ")) == -1)
+                    return "FORMATTING-ERROR: Authorization Field was found, but has no index...";
+
+                for (int i = indexHelper + 22;
+                         i < request.Length &&
+                         request[i] != (char)13; i++)
+                {
+                    if (request[i] != '-')
+                        minusHasBeenReached = true;
+                    if(minusHasBeenReached)
+                        restOftheToken += request[i];
+                    else
+                        username += request[i];
+                }
+                if(restOftheToken == "-mtcgToken")
+                    outputD.Add("username", username);
+            }
+
+            if (request.Contains("Content-Type: application/json"))
+            {
+
+                string lengthAsString = "";
+
+                // Underneath indexHelper is used to capture the index of "Content-Length: "
+                if ((indexHelper = request.IndexOf("Content-Length: ")) == -1)
+                    return "FORMATTING-ERROR: Content-Length Field was found, but has no index...";
+                
+                for (int i = indexHelper + 16;
+                         i < request.Length &&
+                         request[i] != (char)13; i++)
+                    // Underneath indexHelper is used to save the length of Json data
+                    lengthAsString += request[i];
+
+                // Underneath indexHelper is used to save the length of Json data
+                if (!int.TryParse(lengthAsString, out indexHelper))
+                    return "PARSING-ERROR: Could not Parse Content-Length";
+
+                outputD.Add("JSON-Data", $"{request[(1 + request.Length - (indexHelper))..(request.Length - 1)].Replace("\\", string.Empty)}");
+            }
+            httpDataD = outputD;
+            return "";
+        }
+        public bool ValidatePORT(int input)
         {
             return (0 <= input && input <= 65535);
         }
-        public static bool ValidateIP(string input)
+        public bool ValidateIP(string input)
         {
-            if (!CheckStringForEmptiness(input))
+            if (string.IsNullOrEmpty(input))
                 return false;
             IPAddress _;
             return IPAddress.TryParse(input, out _);
-        }
-        public static bool CheckStringForEmptiness(string input)
-        {
-            return (input != null && input != "");
         }
     }
 }

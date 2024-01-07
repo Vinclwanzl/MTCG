@@ -64,11 +64,11 @@ namespace MonsterTradingCardGame
 
             while (_roundNumber <= 100)
             {
-                player1CardIndex = rdm.Next(0, (_player1.Stack.Count - 1));
-                player2CardIndex = rdm.Next(0, (_player2.Stack.Count - 1));
+                player1CardIndex = rdm.Next(0, (_player1.Deck.Count - 1));
+                player2CardIndex = rdm.Next(0, (_player2.Deck.Count - 1));
 
-                cardOfPlayer1 = _player1.Stack[player1CardIndex];
-                cardOfPlayer2 = _player2.Stack[player2CardIndex];
+                cardOfPlayer1 = _player1.Deck[player1CardIndex];
+                cardOfPlayer2 = _player2.Deck[player2CardIndex];
 
                 damageOfCard1 = HandleCard(Player1.Name, cardOfPlayer1, ref player1Buffs, cardOfPlayer2);
                 damageOfCard2 = HandleCard(Player2.Name, cardOfPlayer2, ref player2Buffs, cardOfPlayer1);
@@ -77,24 +77,24 @@ namespace MonsterTradingCardGame
                 if (damageOfCard1 < damageOfCard2)
                 {
                     recordRoundInLog(_player1.Name + " won this round");
-                    _player1.Stack.Add(cardOfPlayer2);
-                    _player2.Stack.RemoveAt(player2CardIndex);
+                    _player1.Deck.Add(cardOfPlayer2);
+                    _player2.Deck.RemoveAt(player2CardIndex);
                 }
                 else if (damageOfCard2 < damageOfCard1)
                 {
                     recordRoundInLog(_player2.Name + " won this round");
-                    _player2.Stack.Add(cardOfPlayer1);
-                    _player1.Stack.RemoveAt(player1CardIndex);
+                    _player2.Deck.Add(cardOfPlayer1);
+                    _player1.Deck.RemoveAt(player1CardIndex);
                 }
                 else
                 {
                     recordRoundInLog("The Round ended in a stalemate! Nothing happens");
                 }
 
-                if (_player1.Stack.Count <= 0 ||
-                    _player2.Stack.Count <= 0)
+                if (_player1.Deck.Count <= 0 ||
+                    _player2.Deck.Count <= 0)
                 {
-                    if (_player1.Stack.Count <= 0)
+                    if (_player1.Deck.Count <= 0)
                     {
                         recordRoundInLog(_player1.Name + " won the Battle!");
                         return 1;
