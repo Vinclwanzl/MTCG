@@ -18,9 +18,9 @@ namespace MonsterTradingCardGame.unit_tests
 
         }
 
-        private Database CreateDatabase()
+        private MTCGDatabase CreateDatabase()
         {
-            return new Database();
+            return new MTCGDatabase();
         }
 
         [TestMethod]

@@ -1,7 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace MonsterTradingCardGame.unit_tests
@@ -49,31 +48,15 @@ namespace MonsterTradingCardGame.unit_tests
         }
 
         [TestMethod]
-        public void IsTableEmpty_StateUnderTest_ExpectedBehavior()
+        public void TurnHttpDataToParameterD_StateUnderTest_ExpectedBehavior()
         {
             // Arrange
             var mTCGServer = CreateMTCGServer();
-            string tableName = null;
+            Dictionary httpDataD = null;
+            Dictionary parameterD = null;
 
             // Act
-            var result = mTCGServer.IsTableEmpty(
-                tableName);
-
-            // Assert
-            Assert.Fail();
-            mockRepository.VerifyAll();
-        }
-
-        [TestMethod]
-        public void TurnHttpDataDtoParameterD_StateUnderTest_ExpectedBehavior()
-        {
-            // Arrange
-            var mTCGServer = CreateMTCGServer();
-            Dictionary<string, string> httpDataD = null;
-            Dictionary<string, string> parameterD = null;
-
-            // Act
-            var result = mTCGServer.TurnHttpDataDtoParameterD(
+            var result = mTCGServer.TurnHttpDataToParameterD(
                 httpDataD,
                 out parameterD);
 
@@ -82,11 +65,21 @@ namespace MonsterTradingCardGame.unit_tests
             mockRepository.VerifyAll();
         }
 
-        public MTCGServer GetMTCGServer()
+        [TestMethod]
+        public void GetParametersFromJsonObject_StateUnderTest_ExpectedBehavior()
         {
-            return mTCGServer;
-        }
+            // Arrange
+            var mTCGServer = CreateMTCGServer();
+            JObject jsonData = null;
 
+            // Act
+            var result = mTCGServer.GetParametersFromJsonObject(
+                jsonData);
+
+            // Assert
+            Assert.Fail();
+            mockRepository.VerifyAll();
+        }
 
         [TestMethod]
         public void GetParametersFromJsonArray_StateUnderTest_ExpectedBehavior()
@@ -137,14 +130,14 @@ namespace MonsterTradingCardGame.unit_tests
         }
 
         [TestMethod]
-        public void GetDynamicDataFromPath_StateUnderTest_ExpectedBehavior()
+        public void GetDataFromPath_StateUnderTest_ExpectedBehavior()
         {
             // Arrange
             var mTCGServer = CreateMTCGServer();
             string path = null;
 
             // Act
-            var result = mTCGServer.GetDynamicDataFromPath(
+            var result = mTCGServer.GetDataFromPath(
                 path);
 
             // Assert
