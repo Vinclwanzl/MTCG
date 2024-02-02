@@ -48,17 +48,19 @@ namespace MonsterTradingCardGame
         private readonly int _TOKENACTIVITYTIMER = 300000;
         public async Task StartServer(string ipAddress, int portNumber, string dbIPAddress, int dbPortNumber)
         {
-            if (IPAddress.TryParse(ipAddress, out IPAddress serverIP)  &&
-                          ValidatePORT(portNumber)                     &&
-                          ValidateIP(dbIPAddress)                      &&
-                          ValidatePORT(dbPortNumber)                   &&
-                          _DatabaseHandler.EstablishConnection(dbIPAddress, dbPortNumber))
-            {
+            if (!(IPAddress.TryParse(ipAddress, out IPAddress serverIP)  &&
+                            ValidatePORT(portNumber)                     &&
+                            ValidateIP(dbIPAddress)                      &&
+                            ValidatePORT(dbPortNumber)                   &&
+                            _DatabaseHandler.EstablishConnection(dbIPAddress, dbPortNumber)
+                )){
+
                 Socket serverSocket = new Socket(
                     AddressFamily.InterNetwork,
                     SocketType.Stream,
                     ProtocolType.Tcp
                 );
+
                 serverSocket.Bind(
                     new IPEndPoint(
                         serverIP,
@@ -131,20 +133,24 @@ namespace MonsterTradingCardGame
             {
                 await semaphoreSlim.WaitAsync();
 
+                // recieve request 
                 byte[] buffer = new byte[1024];
                 int length = await clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), SocketFlags.None);
 
+                // process request into response
                 string request = Encoding.UTF8.GetString(buffer, 0, length);
-                string data = ProcessRequest(request, out int number);
-                string response = $"HTTP/1.1 {number} \r\nContent-Type: text/plain -d " + data;
+                string response = ProcessRequest(request);
 
+                // send response
                 byte[] responseBytes = Encoding.UTF8.GetBytes(response);
                 await clientSocket.SendAsync(new ArraySegment<byte>(responseBytes), SocketFlags.None);
 
                 Console.WriteLine($"Response: {response} sent.");
 
+                // remove Socket
                 clientSocket.Shutdown(SocketShutdown.Both);
                 clientSocket.Close();
+
                 Console.WriteLine("Client disconnected.");
             }
             catch (Exception e)
@@ -158,33 +164,44 @@ namespace MonsterTradingCardGame
         }
 
         // HTTP-REQUEST PROCESSING FUNCTIONS:
-        private string ProcessRequest(string request, out int number)
+        private string ProcessRequest(string request)
         {
-            number = -1;
+            string responseData = "";
             string errmsg = "";
 
+            // TODO: get right response ID for failed task
+            int number = -1;
+
             if (string.IsNullOrEmpty(request))
-                return "ERROR: request is null or empty";
+                return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d ERROR: request is null or empty");
 
             if ((errmsg = ExtractHTTPdata(request, out Dictionary<string, string> httpDataD)) != "")
-                return errmsg;
+                return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d " + errmsg);
 
             if ((errmsg = TurnHttpDataToParameterD(httpDataD, out Dictionary<string, string> parameterD)) != "")
-               return errmsg;
+                return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d " + errmsg);
 
+            // TODO: implement a way to put in the right Content-type for the responseData
+            // -> put "\r\n Content-Type: text/plain -d " into return value of HttpHandler functions
             switch (httpDataD["HTTP-method"])
             {
                 case "POST":
-                    return HandlePOSTRequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandlePOSTRequest(httpDataD["path"], parameterD, ref number);
+                    break;
                 case "GET":
-                    return HandleGETRequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandleGETRequest(httpDataD["path"], parameterD, ref number);
+                    break;
                 case "PUT":
-                    return HandlePUTRequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandlePUTRequest(httpDataD["path"], parameterD, ref number);
+                    break;
                 case "DELETE":
-                    return HandleDELETERequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandleDELETERequest(httpDataD["path"], parameterD, ref number);
+                    break;
                 default:
-                    return "ERROR: HTTPMETHOD is not in the api spec";
+                    responseData = "Content-Type: text/plain -d ERROR: HTTPMETHOD is not in the api spec";
+                    break;
             }
+            return CreateHttpResponse(number, responseData);
         }
 
         private string HandlePOSTRequest(string path, Dictionary<string, string> parameterD, ref int number)
@@ -472,7 +489,7 @@ namespace MonsterTradingCardGame
                 number = 200;
                 return "SUCCESS";    
             }
-            else return "Unknown path for PUT HTTP-method";
+            return "Unknown path for PUT HTTP-method";
         }
         private string HandleDELETERequest(string path, Dictionary<string, string> parameterD, ref int number)
         {
@@ -487,7 +504,7 @@ namespace MonsterTradingCardGame
                 string sqlStatement = $"DELETE FROM trades WHERE tradeID = {id};";
                 return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
             }   
-            else return "Unknown path for DELETE HTTP-method";
+            return "Unknown path for DELETE HTTP-method";
         }
         // JSON HANDLER FUNCTIONS:
 
@@ -504,14 +521,14 @@ namespace MonsterTradingCardGame
                 {
                     JArray jsonData = (JArray) JsonConvert.DeserializeObject(jsonAsString);
                     
-                    if ((parameterD = jsonArrayToDictionary(jsonData, httpDataD["path"])) == null)
+                    if ((parameterD = JsonArrayToDictionary(jsonData, httpDataD["path"])) == null)
                         return "ERROR: the parameters of the provided JSON couldn't be parsed";
                 }
                 else
                 {
                     JObject jsonData = (JObject) JsonConvert.DeserializeObject(jsonAsString);
 
-                    if ((parameterD = jsonObjectToDictionary(jsonData)) == null)
+                    if ((parameterD = JsonObjectToDictionary(jsonData)) == null)
                         return "ERROR: the parameters of the provided JSON couldn't be parsed";
                 }
                 if (httpDataD.ContainsKey("Tokenname"))
@@ -525,7 +542,7 @@ namespace MonsterTradingCardGame
             }
         }
 
-        public static Dictionary<string, string> jsonObjectToDictionary(JObject jsonData)
+        public static Dictionary<string, string> JsonObjectToDictionary(JObject jsonData)
         {
             var parameterD = new Dictionary<string, string>();
             foreach (var property in jsonData.Properties())
@@ -533,13 +550,14 @@ namespace MonsterTradingCardGame
 
             return parameterD;
         }
+
         /// <summary>
         /// option should either be the current path defined in the api-spec or "" if it is a normal jsonarray
         /// </summary>
         /// <param name="jsonArray"></param>
         /// <param name="option"></param>
         /// <returns></returns>
-        public static Dictionary<string, string> jsonArrayToDictionary(JArray jsonArray, string option)
+        public static Dictionary<string, string> JsonArrayToDictionary(JArray jsonArray, string option)
         {
             var outputD = new Dictionary<string, string>();
             
@@ -599,6 +617,12 @@ namespace MonsterTradingCardGame
         }
 
         // STRING PARSING FUNCTIONS:
+        
+        public static string CreateHttpResponse(int responseID, string responseData)
+        {
+            return $"HTTP/1.1 {responseID}\r\n{responseData}";
+        }
+
         public static string GetDataFromPath(string path)
         {
             return path[(path.LastIndexOf('/') + 1)..(path.Length - 1)];
