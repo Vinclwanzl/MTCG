@@ -44,8 +44,12 @@ namespace MonsterTradingCardGame
 
         private object _PoolLock = new object();
         private Queue<User> _waitingPlayers = new Queue<User>();
-        
+
+        private readonly string JSONHEADER = "\r\nContent-Type: application/json -d ";
+        private readonly string PLAINHEADER = "\r\nContent-Type: text/plain -d ";
+
         private readonly int _TOKENACTIVITYTIMER = 300000;
+
         public async Task StartServer(string ipAddress, int portNumber, string dbIPAddress, int dbPortNumber)
         {
             if (!(IPAddress.TryParse(ipAddress, out IPAddress serverIP)  &&
@@ -120,7 +124,11 @@ namespace MonsterTradingCardGame
                        (_userTokensD[userToken] - DateTime.Now).TotalMilliseconds > _TOKENACTIVITYTIMER );
             }
         }
-
+        /// <summary>
+        /// Checks if sent data contains an activated user-token 
+        /// </summary>
+        /// <param name="parameterD"></param>
+        /// <returns>True, if user is not permitted, due to the token being non existing in the request or it being not activated in the server</returns>
         private bool doTokenCheckIn(Dictionary<string, string> parameterD) 
         {
             return !parameterD.ContainsKey("Tokenname") && !IsTokenActive(parameterD["Tokenname"]);
@@ -170,18 +178,26 @@ namespace MonsterTradingCardGame
             string errmsg = "";
 
             // TODO: get right response ID for failed task
-            int number = -1;
+            int number = 500;
 
             if (string.IsNullOrEmpty(request))
-                return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d ERROR: request is null or empty");
+            {
+                number = 400;
+                return CreateHttpResponse(number, PLAINHEADER + "ERROR: request is null or empty");
+            }
 
             if ((errmsg = ExtractHTTPdata(request, out Dictionary<string, string> httpDataD)) != "")
-                return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d " + errmsg);
+            {
+                number = 400;
+                return CreateHttpResponse(number, PLAINHEADER + errmsg);
+            }
 
             if ((errmsg = TurnHttpDataToParameterD(httpDataD, out Dictionary<string, string> parameterD)) != "")
+            {
                 return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d " + errmsg);
+            }
 
-            // TODO: implement a way to put in the right Content-type for the responseData
+            // TODO: implement a way to put in the right Content-type for the JSONHEADER
             // -> put "\r\n Content-Type: text/plain -d " into return value of HttpHandler functions
             switch (httpDataD["HTTP-method"])
             {
@@ -198,7 +214,8 @@ namespace MonsterTradingCardGame
                     responseData = HandleDELETERequest(httpDataD["path"], parameterD, ref number);
                     break;
                 default:
-                    responseData = "Content-Type: text/plain -d ERROR: HTTPMETHOD is not in the api spec";
+                    number = 505;
+                    responseData = PLAINHEADER + "ERROR: HTTPMETHOD is not in the api spec";
                     break;
             }
             return CreateHttpResponse(number, responseData);
@@ -206,19 +223,21 @@ namespace MonsterTradingCardGame
 
         private string HandlePOSTRequest(string path, Dictionary<string, string> parameterD, ref int number)
         {
-            string errmsg;
+            string sqlResult;
             string sqlStatement;
+            
+
             switch (path)
             {
                 case "/users":
                     sqlStatement = "INSERT INTO players (username, password, coinpurse) VALUES (@username, @password, 20);";
-                    if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD).Contains("ERROR:"))
+                    if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD).Contains("ERROR"))
                     {
                         number = 409;
-                        return "USER ALREADY EXISTS";
+                        return PLAINHEADER + "User with same username already registered";
                     }
                     number = 201;
-                    return "SUCCESS";
+                    return PLAINHEADER + "User successfully created";
 
                 case "/tradings":
                     if (!doTokenCheckIn(parameterD))
@@ -233,12 +252,12 @@ namespace MonsterTradingCardGame
                     if (doTokenCheckIn(parameterD))
                     {
                         number = 401;
-                        return "INVALID TOKEN";
+                        return JSONHEADER + "INVALID TOKEN";
                     }
                     
-                    if ((errmsg = _DatabaseHandler.GetDeckForBattle(parameterD["Tokenname"], out List<Card> deck)).Contains("ERROR"))
+                    if ((sqlResult = _DatabaseHandler.GetDeckForBattle(parameterD["Tokenname"], out List<Card> deck)).Contains("ERROR"))
                     {
-                        return errmsg;
+                        return sqlResult;
                     }
 
                     User player = new User(parameterD["Tokenname"], deck);
@@ -255,25 +274,46 @@ namespace MonsterTradingCardGame
                     if (doTokenCheckIn(parameterD))
                     {
                         number = 401;
-                        return "INVALID TOKEN";
+                        return PLAINHEADER + "INVALID TOKEN";
                     }
 
                     if (_DatabaseHandler.IsTableEmpty("package"))
                     {
                         number = 404;
-                        return "SORRY, WE HAVE RAN OUT OF CARD PACKAGES!";
+                        return PLAINHEADER + "No card package available for buying";
                     }
 
                     sqlStatement = $"SELECT coinpurse FROM players WHERE username = @Tokenname";
                     if (!(int.TryParse(_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int coins) &&
-                        coins > 5                                                                        ))
+                          coins > 5                                                                                       ))
                     {
                         number = 403;
-                        return "NOT ENOUGH MONEY";
+                        return PLAINHEADER + "Not enough money for buying a card package";
                     }
 
+                    
+
+                    sqlStatement = $"SELECT cardasjson1, cardasjson2, cardasjson3, cardasjson4, cardasjson5 FROM package ORDER BY RANDOM() LIMIT 1";
+
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                    {
+                        number = 500;
+                        Console.WriteLine(sqlResult);
+                        return PLAINHEADER + "internal server error";
+                    }
+                    // TODO: turn serialiezed json string into json array
+                    // maybe change ExecuteSQLCodeSanitized if needed
+
+                    number = 200;
+
                     sqlStatement = $"UPDATE players SET coinpurse = coinpurse - 5 WHERE username = @Tokenname;";
-                    number = 404;
+
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                    {
+                        number = 500;
+                        Console.WriteLine(sqlResult);
+                        return PLAINHEADER + "internal server error";
+                    }
 
                     return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
 
@@ -281,20 +321,23 @@ namespace MonsterTradingCardGame
                     if (doTokenCheckIn(parameterD))
                     {
                         number = 401;
-                        return "INVALID TOKEN";
+                        return PLAINHEADER + "INVALID TOKEN";
                     }
 
                     if ((parameterD["Tokenname"] != "admin"))
                     {
                         number = 403;
-                        return "You don't have the privileges for this action";
+                        return PLAINHEADER + "Provided user is not \"admin\"";
                     }
 
 
                     sqlStatement = "INSERT INTO packages (id, cardasjson1, cardasjson2, cardasjson3, cardasjson4, cardasjson5) VALUES (@id, @cardasjson1, @cardasjson2, @cardasjson3, @cardasjson4, @cardasjson5);";
 
-                    if((errmsg = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
-                        return errmsg;
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                    {
+                        number = 500;
+                        return PLAINHEADER + sqlResult;
+                    }
 
                     sqlStatement = "INSERT INTO cards (cardID, cardAsJson) VALUES (@cardid, @cardasjson)";
                     bool cardAlreadyExisted = false;
@@ -317,30 +360,27 @@ namespace MonsterTradingCardGame
                     if (cardAlreadyExisted)
                     {
                         number = 409;
-                        return "ONE OR MORE CARDS ALREADY EXISTED";
+                        return PLAINHEADER + "At least one card in the packages already exists";
                     }
                     else
                     {
                         number = 201;
-                        return "SUCCESS";
+                        return PLAINHEADER + "Package and cards successfully created";
                     }
-
 
                 case "/sessions":
                     sqlStatement = "SELECT COUNT(*) FROM players WHERE username = @username AND password = @password;";
-                    Console.WriteLine("/sessions detected!");
                     if (int.TryParse(_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int result) &&
                         result > 0                                                                                       )
                     {
                         SetToken(parameterD["username"]);
                         number = 200;
-                        return "SUCCESS";
+                        return PLAINHEADER + "User login successful";
                     }
-                    else
-                    {
-                        number = 401;
-                        return "INVALID USERNAME / PASSWORD";
-                    }
+                    
+                    number = 401;
+                    return PLAINHEADER + "Invalid username/password provided";
+                    
 
                 default:
                     if(path.Contains("/tradings/"))
@@ -348,20 +388,19 @@ namespace MonsterTradingCardGame
                         if (doTokenCheckIn(parameterD))
                         {
                             number = 401;
-                            return "INVALID TOKEN";
+                            return PLAINHEADER + "Invalid username/password provided";
                         }
                         string tradeID = GetDataFromPath(path);
                         sqlStatement = "";
                         return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
                     }
                     else 
-                        return "Unknown path For POST HTTP-method";
+                        return PLAINHEADER + "Unknown path For POST HTTP-method";
             }
         }
         
         private string HandleGETRequest(string path, Dictionary<string, string> parameterD, ref int number)
         {
-            
             if (doTokenCheckIn(parameterD))
             {
                 number = 401;
@@ -403,23 +442,32 @@ namespace MonsterTradingCardGame
                 default:
                     if (path.Contains("/users/"))
                     {
-                        string currentUser = GetDataFromPath(path);
-                        if (parameterD["Tokenname"] == currentUser ||
-                            parameterD["Tokenname"] == "admin"     )
+                        if (_DatabaseHandler.checkUsersExistance(parameterD["oldusername"]))
                         {
-                            parameterD["Username"] = currentUser;
-                            sqlStatement = "SELECT * FROM players WHERE username = @Username;";
-
-                            number = 401;
-                            if ((message = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
-                                number = 404;
-                            return message;
+                            message = "User not found";
+                            number = 404;
+                            return "User not found";
                         }
-                        else
+
+                        string currentUser = GetDataFromPath(path);
+
+                        if (parameterD["Tokenname"] != currentUser ||
+                            parameterD["Tokenname"] != "admin"     )
                         {
                             number = 401;
                             return $"You don't have permissions retrieve userdata of {currentUser}!";
                         }
+
+                        parameterD["Username"] = currentUser;
+                        sqlStatement = "SELECT * FROM players WHERE username = @Username;";
+
+                        number = 200;
+                        if ((message = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                        {
+                            Console.WriteLine(message);
+                            number = 500;
+                        }
+                        return message;
                     }
                     else
                         return "Unknown path For GET HTTP-method";
@@ -476,16 +524,19 @@ namespace MonsterTradingCardGame
                     number = 401;
                     return "INVALID TOKEN";
                 }
-                sqlStatement = "SELECT COUNT(*) FROM players WHERE username = @oldusername;";
-                if(_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD) == "0")
+
+                if(_DatabaseHandler.checkUsersExistance(parameterD["oldusername"]))
                 {
                     number = 404;
-                    return "No User with given name exists";
+                    return "User not found";
                 }
 
                 sqlStatement = "UPDATE players SET username = @username, password = @password, bio = @bio, image = @image WHERE username = @oldusername;";
                 if ((message = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                {
+                    number = 500;
                     return message;
+                }
                 number = 200;
                 return "SUCCESS";    
             }

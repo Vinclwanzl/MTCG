@@ -125,6 +125,22 @@ namespace MonsterTradingCardGame
                 }
             }
         }
+        public bool checkUsersExistance(string username)
+        {
+            if(string.IsNullOrEmpty(username))
+                return false;
+            lock (_DataBaseLock)
+            {
+                Dictionary<string, string> parameterD = new Dictionary<string, string> 
+                {
+                    { "username", username }
+                };
+                string sqlStatement = $"SELECT COUNT(*) FROM players WHERE username = @username;";
+                string result = ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                
+                return 0 < parseCountResult(result);
+            }
+        }
         public string ExecuteSQLCodeSanitized(string sqlCommand, Dictionary<string, string> parameterD)
         {
             lock (_DataBaseLock)
@@ -158,7 +174,7 @@ namespace MonsterTradingCardGame
                             {
                                 DataSet dataSet = new DataSet();
                                 dataAdapter.Fill(dataSet);
-
+                                
                                 string result = JsonConvert.SerializeObject(dataSet, Formatting.Indented);
                                 Console.WriteLine(result);
 
@@ -170,19 +186,19 @@ namespace MonsterTradingCardGame
                         }
                         else
                         {
-                            
                             return "" + cmd.ExecuteNonQuery();
                         }
                     }
                 }
                 catch (JsonSerializationException ex)
                 {
-                    return "JSON couldn't be serialized";
+                    Console.WriteLine($"ERROR: occured during Json serialization:\n{ex.Message}");
+                    return "Database-ERROR: \n" + ex.Message;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"ERROR: occured while inserting data:\n{ex.Message}");
-                    return "ERROR: \n" + ex.Message;
+                    Console.WriteLine($"ERROR: occured during query:\n{ex.Message}");
+                    return "Database-ERROR: \n" + ex.Message;
                 }
 
                 finally
