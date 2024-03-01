@@ -1,0 +1,95 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ClassDiagram MajorVersion="1" MinorVersion="1">
+  <Class Name="MonsterTradingCardGame.Battle">
+    <Position X="10.75" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAIgAAIAxACIAAAAAABAAAGAACBAAAAAAAA=</HashCode>
+      <FileName>Battle.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.Buffs">
+    <Position X="8.75" Y="4.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAACAAEgAAIAAAAAAEgAAAAAAABAAQAA=</HashCode>
+      <FileName>Buffs.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.BuffSpell">
+    <Position X="3" Y="8" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAACEAEAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>BuffSpell.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.Card">
+    <Position X="3" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAIAjAAAAggAIEAABAAAQAAAAIAIAAAAAAAAAAAAA=</HashCode>
+      <FileName>Card.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.DemoMTCG">
+    <Position X="0.5" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAA=</HashCode>
+      <FileName>DemoMTCG.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.Monster">
+    <Position X="0.5" Y="5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>Monster.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.MTCGDatabase">
+    <Position X="8.75" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAICAAEAAAAAAIAQAAAAgCAgAIAAAAAAAAQAAAQAAA=</HashCode>
+      <FileName>MTCGDatabase.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.MTCGServer">
+    <Position X="6.75" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>ABCAAAQCECQREAA4AhkACAAQAIAANAQAIQAAYAAAACI=</HashCode>
+      <FileName>MTCGServer.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.Spell">
+    <Position X="3" Y="5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAQAAAAAEAAAAAAAAAAAAAAAAAAAAAAgAAAA=</HashCode>
+      <FileName>Spell.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.TrapSpell">
+    <Position X="0.5" Y="8" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAgAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAg=</HashCode>
+      <FileName>TrapSpell.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="MonsterTradingCardGame.User">
+    <Position X="10.75" Y="5.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAIAAAAAAAAAAAAAAAAAQAAAAAAAAAAAhAAAAAAAA=</HashCode>
+      <FileName>User.cs</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Enum Name="MonsterTradingCardGame.EDinoTypes">
+    <Position X="4.75" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAEAAAAAAAAAgAAAAAAAAAAAAAAQAAAAAAAAAAIA=</HashCode>
+      <FileName>Card.cs</FileName>
+    </TypeIdentifier>
+  </Enum>
+  <Enum Name="MonsterTradingCardGame.ESpellTypes">
+    <Position X="4.75" Y="5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAiAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</HashCode>
+      <FileName>Spell.cs</FileName>
+    </TypeIdentifier>
+  </Enum>
+  <Font Name="Segoe UI" Size="9" />
+</ClassDiagram>

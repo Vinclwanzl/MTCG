@@ -13,7 +13,7 @@ namespace MonsterTradingCardGame
         VOLCANIC = 2,
         AERIAL = 3
     }
-    class Card
+    public class Card
     {
         private string _id;
         public string ID { get { return _id; } }
@@ -24,7 +24,7 @@ namespace MonsterTradingCardGame
         public string Name { get { return _name; } }
 
         private string _description;
-        public string Description { get { return _name; } }
+        public string Description { get { return _description; } }
 
         private int _shopCost;
         public int ShopCost { get { return _shopCost; } }
@@ -43,7 +43,7 @@ namespace MonsterTradingCardGame
         }
         public override string ToString()
         {
-            return "Name: " + _name + " | Dinotype: " + Enum.GetName(typeof(EDinoTypes), _dinoType) + " | Damage: " + _damage + " |Description:" + _description + " |Cost: " + _shopCost + "|";
+            return $"Name: {_name} | Dinotype: {Enum.GetName(typeof(EDinoTypes), _dinoType)} | Damage: {_damage} | Description: {_description} | Cost: {_shopCost}|";
         }
     }
 }

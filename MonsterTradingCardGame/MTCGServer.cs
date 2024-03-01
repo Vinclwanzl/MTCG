@@ -1,64 +1,53 @@
-﻿using System;
-using System.Text;
-using System.Net;
-using System.Text.Json;
+﻿using System.Text;
 
 namespace MonsterTradingCardGame
 {
-    using System;
-    using System.Collections.Generic;
-    using System.ComponentModel.DataAnnotations;
-    using System.ComponentModel.Design;
-    using System.Data;
-    using System.Drawing;
-    using System.Dynamic;
-    using System.Globalization;
-    using System.IO;
-    using System.Linq;
-    using System.Net;
-    using System.Net.Http;
-    using System.Net.Sockets;
-    using System.Numerics;
-    using System.Reflection.Metadata;
-    using System.Security.AccessControl;
-    using System.Security.Claims;
-    using System.Security.Cryptography.X509Certificates;
-    using System.Text.Json.Nodes;
-    using System.Text.RegularExpressions;
-    using System.Xml.Linq;
+    using Moq;
     using Newtonsoft.Json;
     using Newtonsoft.Json.Linq;
-    using Npgsql;
-    using static System.Runtime.InteropServices.JavaScript.JSType;
-    using static Npgsql.Replication.PgOutput.Messages.RelationMessage;
+    using System;
+    using System.Collections.Generic;
+    using System.Data;
+    using System.Diagnostics;
+    using System.Diagnostics.Eventing.Reader;
+    using System.Linq;
+    using System.Net;
+    using System.Net.Sockets;
+    using System.Numerics;
 
-    class MTCGServer
+    public class MTCGServer
     {
-        private static readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
-        private static List<Socket> _lobbyClients = new List<Socket>();
+        private static readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(10, 10);
+        private static MTCGDatabase _DatabaseHandler = new MTCGDatabase();
 
-        private static MTCGDatabase _DatabaseHandler = new MTCGDatabase(); 
-        
         private static object _TokenLock = new object();
         private static Dictionary<string, DateTime> _userTokensD = new Dictionary<string, DateTime>();
 
         private object _PoolLock = new object();
         private Queue<User> _waitingPlayers = new Queue<User>();
+        private Battle? _battle;
 
-        private readonly string JSONHEADER = "\r\nContent-Type: application/json -d ";
-        private readonly string PLAINHEADER = "\r\nContent-Type: text/plain -d ";
+        private readonly string JSONHEADER = "\r\nContent-Type: application/json -d \r\n\r\n";
+        private readonly string PLAINHEADER = "\r\nContent-Type: text/plain -d \r\n\r\n";
 
         private readonly int _TOKENACTIVITYTIMER = 300000;
 
-        public async Task StartServer(string ipAddress, int portNumber, string dbIPAddress, int dbPortNumber)
+        /// <summary>
+        /// starts the Server
+        /// </summary>
+        /// <param name="ipAddress"></param>
+        /// <param name="portNumber"></param>
+        /// <param name="dbIPAddress"></param>
+        /// <param name="dbPortNumber"></param>
+        /// <returns>True, if Server started successfully</returns>
+        public void StartServer(string ipAddress, int portNumber, string dbIPAddress, int dbPortNumber)
         {
-            if (!(IPAddress.TryParse(ipAddress, out IPAddress serverIP)  &&
-                            ValidatePORT(portNumber)                     &&
-                            ValidateIP(dbIPAddress)                      &&
-                            ValidatePORT(dbPortNumber)                   &&
-                            _DatabaseHandler.EstablishConnection(dbIPAddress, dbPortNumber)
-                )){
-
+            if (IPAddress.TryParse(dbIPAddress, out IPAddress serverIP) &&
+                ValidatePORT(portNumber) &&
+                ValidateIP(dbIPAddress) &&
+                ValidatePORT(dbPortNumber) &&
+                _DatabaseHandler.EstablishConnection(dbIPAddress, dbPortNumber))
+            {
                 Socket serverSocket = new Socket(
                     AddressFamily.InterNetwork,
                     SocketType.Stream,
@@ -77,31 +66,40 @@ namespace MonsterTradingCardGame
 
                 while (true)
                 {
-                    Console.WriteLine("Client not yet connected.");
-                    Socket clientSocket = await serverSocket.AcceptAsync();
+                    Socket clientSocket = serverSocket.Accept();
                     Console.WriteLine("Client connected.");
 
-                    _ = Task.Run(() => HandleClientAsync(clientSocket));
+                    // Verwende einen Thread anstelle eines Tasks
+                    Thread clientThread = new Thread(() => HandleClient(clientSocket));
+                    clientThread.Start();
                 }
             }
-            else 
+            else
             {
-                Console.WriteLine("ERROR occured while starting the server");
+                Console.WriteLine("ERROR occurred while starting the server");
                 if (!ValidateIP(dbIPAddress))
+                {
                     Console.WriteLine($"-> the Database ip-address: {dbIPAddress} is invalid!");
+                }
                 if (!ValidatePORT(dbPortNumber))
+                {
                     Console.WriteLine($"-> the Database port: {dbPortNumber} is invalid!");
+                }
                 if (!ValidateIP(ipAddress))
+                {
                     Console.WriteLine($"-> the Server ip-address: {ipAddress} is invalid!");
+                }
                 if (!ValidatePORT(portNumber))
+                {
                     Console.WriteLine($"-> the Server port: {portNumber} is invalid!");
+                }
             }
         }
 
         // TOKEN HANDLING FUNCTIONS:
 
         /// <summary>
-        /// 
+        /// sets user-token
         /// </summary>
         /// <param name="userToken"></param>
         /// <returns></returns>
@@ -110,40 +108,59 @@ namespace MonsterTradingCardGame
             lock (_TokenLock)
             {
                 if (_userTokensD.ContainsKey(userToken))
+                {
                     _userTokensD[userToken] = DateTime.Now;
+                }
                 else
                     _userTokensD.Add(userToken, DateTime.Now);
             }
         }
-
-        private bool IsTokenActive(string userToken)
+        /// <summary>
+        /// removes Usertokens
+        /// </summary>
+        /// <param name="userToken"></param>
+        private static void RemoveToken(string userToken)
         {
             lock (_TokenLock)
             {
-                return (_userTokensD.ContainsKey(userToken)                                             &&
-                       (_userTokensD[userToken] - DateTime.Now).TotalMilliseconds > _TOKENACTIVITYTIMER );
+                if (_userTokensD.ContainsKey(userToken))
+                {
+                    _userTokensD.Remove(userToken);
+                }
             }
         }
+
         /// <summary>
         /// Checks if sent data contains an activated user-token 
         /// </summary>
-        /// <param name="parameterD"></param>
-        /// <returns>True, if user is not permitted, due to the token being non existing in the request or it being not activated in the server</returns>
-        private bool doTokenCheckIn(Dictionary<string, string> parameterD) 
+        /// <param name="queryParameterD"></param>
+        /// <returns>True, if user is permitted and False if user is not permitted, due to the token being non existing in the request or it being not activated in the server</returns>
+        private bool IsTokenActive(Dictionary<string, string> queryParameterD)
         {
-            return !parameterD.ContainsKey("Tokenname") && !IsTokenActive(parameterD["Tokenname"]);
+            if (!queryParameterD.TryGetValue("Tokenname", out string name))
+            {
+                return false;
+            }
+
+            lock (_TokenLock)
+            {
+                if (!_userTokensD.ContainsKey(name))
+                {
+                    return false;
+                }
+                return (_userTokensD[name] - DateTime.Now).TotalMilliseconds < _TOKENACTIVITYTIMER;
+            }
         }
 
         // HTTP COMMUNICATION FUNCTION:
-        private async Task HandleClientAsync(Socket clientSocket)
+        private void HandleClient(Socket clientSocket)
         {
             try
             {
-                await semaphoreSlim.WaitAsync();
-
+                semaphoreSlim.Wait();
                 // recieve request 
                 byte[] buffer = new byte[1024];
-                int length = await clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), SocketFlags.None);
+                int length = clientSocket.Receive(new ArraySegment<byte>(buffer), SocketFlags.None);
 
                 // process request into response
                 string request = Encoding.UTF8.GetString(buffer, 0, length);
@@ -151,19 +168,19 @@ namespace MonsterTradingCardGame
 
                 // send response
                 byte[] responseBytes = Encoding.UTF8.GetBytes(response);
-                await clientSocket.SendAsync(new ArraySegment<byte>(responseBytes), SocketFlags.None);
+                clientSocket.Send(new ArraySegment<byte>(responseBytes), SocketFlags.None);
 
-                Console.WriteLine($"Response: {response} sent.");
+                Console.WriteLine($"Response sent.");
 
                 // remove Socket
                 clientSocket.Shutdown(SocketShutdown.Both);
                 clientSocket.Close();
 
-                Console.WriteLine("Client disconnected.");
+                Console.WriteLine("Client disconnected.\n");
             }
             catch (Exception e)
             {
-                Console.WriteLine($"Error handling client: {e.Message}");
+                Console.WriteLine($"Error handling client: {e.Message}\n");
             }
             finally
             {
@@ -171,188 +188,376 @@ namespace MonsterTradingCardGame
             }
         }
 
-        // HTTP-REQUEST PROCESSING FUNCTIONS:
+        // HTTP-REQUEST PROCESSING FUNCTIONS:#
+        /// <summary>
+        /// processes given http request
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns>string with HTTP response</returns>
         private string ProcessRequest(string request)
         {
-            string responseData = "";
-            string errmsg = "";
+            string responseData;
+            string errmsg;
 
-            // TODO: get right response ID for failed task
+            // if request fails for specific reason the right errorcode has to be given to 'number' variable
+            // otherwise 500 (internal server error) will be sent;
             int number = 500;
+
 
             if (string.IsNullOrEmpty(request))
             {
                 number = 400;
-                return CreateHttpResponse(number, PLAINHEADER + "ERROR: request is null or empty");
+                return CreateHttpResponse(number, "ERROR: request is null or empty");
             }
 
-            if ((errmsg = ExtractHTTPdata(request, out Dictionary<string, string> httpDataD)) != "")
+            if ((errmsg = ExtractHTTPData(request, out Dictionary<string, string> httpDataD)) != "")
             {
                 number = 400;
-                return CreateHttpResponse(number, PLAINHEADER + errmsg);
+                return CreateHttpResponse(number, errmsg);
             }
+            Console.WriteLine("path" + httpDataD["path"]);
 
-            if ((errmsg = TurnHttpDataToParameterD(httpDataD, out Dictionary<string, string> parameterD)) != "")
+            if ((errmsg = FillParameterD(httpDataD, out Dictionary<string, string> queryParameterD)) != "")
             {
                 return CreateHttpResponse(number, "\r\n Content-Type: text/plain -d " + errmsg);
             }
 
-            // TODO: implement a way to put in the right Content-type for the JSONHEADER
-            // -> put "\r\n Content-Type: text/plain -d " into return value of HttpHandler functions
+            if (httpDataD.ContainsKey("Tokenname"))
+            {
+                queryParameterD.Add("Tokenname", httpDataD["Tokenname"]);
+            }
+
             switch (httpDataD["HTTP-method"])
             {
                 case "POST":
-                    responseData = HandlePOSTRequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandlePOSTRequest(httpDataD["path"], queryParameterD, ref number);
                     break;
                 case "GET":
-                    responseData = HandleGETRequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandleGETRequest(httpDataD["path"], queryParameterD, ref number);
                     break;
                 case "PUT":
-                    responseData = HandlePUTRequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandlePUTRequest(httpDataD["path"], queryParameterD, ref number);
                     break;
                 case "DELETE":
-                    responseData = HandleDELETERequest(httpDataD["path"], parameterD, ref number);
+                    responseData = HandleDELETERequest(httpDataD["path"], queryParameterD, ref number);
                     break;
                 default:
                     number = 505;
-                    responseData = PLAINHEADER + "ERROR: HTTPMETHOD is not in the api spec";
+                    responseData = "ERROR: HTTPMETHOD is not in the api spec";
                     break;
             }
             return CreateHttpResponse(number, responseData);
         }
 
-        private string HandlePOSTRequest(string path, Dictionary<string, string> parameterD, ref int number)
+        private string HandlePOSTRequest(string path, Dictionary<string, string> queryParameterD, ref int number)
         {
             string sqlResult;
             string sqlStatement;
-            
 
             switch (path)
             {
                 case "/users":
                     sqlStatement = "INSERT INTO players (username, password, coinpurse) VALUES (@username, @password, 20);";
-                    if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD).Contains("ERROR"))
+                    if (_DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD).Contains("ERROR"))
                     {
                         number = 409;
-                        return PLAINHEADER + "User with same username already registered";
+                        return "User with same username already registered";
                     }
-                    number = 201;
-                    return PLAINHEADER + "User successfully created";
-
-                case "/tradings":
-                    if (!doTokenCheckIn(parameterD))
-                    {
-                        number = 401;
-                        return "INVALID TOKEN";
-                    }
-                    sqlStatement = "INSERT INTO trades (tradeID, cardID, username, mindamage) VALUES (@tradeID, @cardID, @Tokenname, @minDamage);";
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
-
-                case "/battles":
-                    if (doTokenCheckIn(parameterD))
-                    {
-                        number = 401;
-                        return JSONHEADER + "INVALID TOKEN";
-                    }
-                    
-                    if ((sqlResult = _DatabaseHandler.GetDeckForBattle(parameterD["Tokenname"], out List<Card> deck)).Contains("ERROR"))
+                    sqlStatement = "INSERT INTO scoreboard (username, amountofwins) VALUES (@username, 0);";
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
                     {
                         return sqlResult;
                     }
 
-                    User player = new User(parameterD["Tokenname"], deck);
-                    AddPlayer(player);
-                    Battle currentBattle = WaitForOpponent();
-                    string winner = currentBattle.StartBattle();
-                    
-                    sqlStatement = $"UPDATE scoreboard SET amountofwins = amountofwins + 1 WHERE username = {winner};";
-                    _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
-                    return currentBattle.BattleLog;
+                    // bellow cards get added that are needed in curl 11 for testing, they get inserted because there is a chance players won't get the cards from the package 
+                    // it can be deleted if needed 
+                    if (queryParameterD["username"] == "kienboec" ||
+                        queryParameterD["username"] == "altenhof")
+                    {
+                        string[] cardIDs = new string[4];
+                        if (queryParameterD["username"] == "kienboec")
+                        {
+                            cardIDs[0] = "845f0dc7-37d0-426e-994e-43fc3ac83c08";
+                            cardIDs[1] = "99f8f8dc-e25e-4a95-aa2c-782823f36e2a";
+                            cardIDs[2] = "f8043c23-1534-4487-b66b-238e0c3c39b5";
+                            cardIDs[3] = "171f6076-4eb5-4a7d-b3f2-2d650cc3d237";
+                        }
+                        else if (queryParameterD["username"] == "altenhof")
+                        {
+                            cardIDs[0] = "1cb6ab86-bdb2-47e5-b6e4-68c5ab389334";
+                            cardIDs[1] = "91a6471b-1426-43f6-ad65-6fc473e16f9f";
+                            cardIDs[2] = "d60e23cf-2238-4d49-844f-c7589ee5342e";
+                            cardIDs[3] = "84d276ee-21ec-4171-a509-c1b88162831c";
+                        }
+                        for (int i = 0; i < cardIDs.Length; i++)
+                        {
+                            sqlStatement = $"INSERT INTO cardcompendium (cardID, username, amount) VALUES ('{cardIDs[i]}', @username, 1)";
+                            if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                            {
+                                return sqlResult;
+                            }
+                        }
+                    }
+                    // end of curl 11 testing prep
+
+                    number = 201;
+                    return PLAINHEADER + "User successfully created";
+
+                case "/tradings":
+                    if (!IsTokenActive(queryParameterD))
+                    {
+                        number = 401;
+                        return "INVALID TOKEN";
+                    }
+
+                    sqlStatement = "SELECT amount FROM cardcompendium WHERE username = @Tokenname AND cardID = @cardtotrade;";
+                    string ccAmount;
+                    if ((ccAmount = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return ccAmount;
+                    }
+
+
+                    int deckResult = 0;
+                    for (int i = 1; i < 5; i++)
+                    {
+                        sqlStatement = $"SELECT COUNT(*) FROM decks WHERE cardID{i} = @cardtotrade;";
+                        if ((_DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)) != "0")
+                        {
+                            ++deckResult;
+                        }
+                    }
+
+                    if (!int.TryParse(ccAmount, out int amountInCardCompendium) &&
+                        deckResult > 0 &&
+                        amountInCardCompendium <= deckResult)
+                    {
+                        number = 403;
+                        return "The deal contains a card that is not owned by the user or locked in the deck.";
+                    }
+
+                    if (!int.TryParse(queryParameterD["mindamage"], out int mindamage) &&
+                        mindamage < 0)
+                    {
+                        number = 403;
+                        return "The mindamage field was either not a number or negative.";
+                    }
+
+
+                    sqlStatement = "SELECT COUNT(*) FROM trades WHERE tradeID = @tradeid;";
+                    if ((sqlResult = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return sqlResult;
+                    }
+
+                    if (sqlResult != "0")
+                    {
+                        number = 409;
+                        return "A deal with this deal ID already exists";
+                    }
+
+
+                    sqlStatement = $"INSERT INTO trades (tradeID, cardID, username, mindamage) VALUES (@tradeid, @cardtotrade, @Tokenname, {mindamage});";
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return sqlResult;
+                    }
+
+                    number = 201;
+                    return PLAINHEADER + "Trading deal successfully created";
+
+                case "/battles":
+                    if (!IsTokenActive(queryParameterD))
+                    {
+                        number = 401;
+                        return "INVALID TOKEN";
+                    }
+
+                    if ((sqlResult = _DatabaseHandler.GetDeck(queryParameterD["Tokenname"], out List<Card> deck)).Contains("ERROR"))
+                    {
+                        return sqlResult;
+                    }
+
+                    List<Card> _ = new List<Card>(deck);
+
+                    for (int i = 0; i < _.Count(); i++)
+                    {
+                        if (_[i] == null)
+                        {
+                            number = 400;
+                            return "At least one Card in your deck is empty!";
+                        }
+                    }
+
+                    User player = new User(queryParameterD["Tokenname"], _);
+
+                    Battle currentBattle = WaitForOpponent(player);
+                    Console.WriteLine("PLAYER:\n" + queryParameterD["Tokenname"] + "\n Battle with players:" + currentBattle.Player1.Name + ", " + currentBattle.Player2.Name + "\n");
+
+                    string winner = currentBattle.Winner;
+
+                    if (player.Name == winner)
+                    {
+                        sqlStatement = $"UPDATE scoreboard SET amountofwins = amountofwins + 1 WHERE username = @Tokenname;";
+
+                        if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                        {
+                            return "Your win couldn't be recorded, because your opponent used a badly phrased Genies-wish (internal Server error),\n Anyways here is the Battlelog:\n" + currentBattle.BattleLog;
+                        }
+                    }
+                    number = 200;
+
+                    if (!_DatabaseHandler.RedistributeCards(deck, player.Deck, queryParameterD))
+                    {
+                        return PLAINHEADER + "The Battle was concluded, but the Cards couldn't get redistrubuted:\n" + currentBattle.BattleLog;
+                    }
+
+                    return PLAINHEADER + currentBattle.BattleLog;
 
                 case "/transactions/packages":
 
-                    if (doTokenCheckIn(parameterD))
+                    if (!IsTokenActive(queryParameterD))
                     {
                         number = 401;
-                        return PLAINHEADER + "INVALID TOKEN";
+                        return "INVALID TOKEN";
                     }
 
-                    if (_DatabaseHandler.IsTableEmpty("package"))
+                    if (_DatabaseHandler.IsTableEmpty("packages"))
                     {
                         number = 404;
-                        return PLAINHEADER + "No card package available for buying";
+                        return "No card package available for buying";
                     }
 
-                    sqlStatement = $"SELECT coinpurse FROM players WHERE username = @Tokenname";
-                    if (!(int.TryParse(_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int coins) &&
-                          coins > 5                                                                                       ))
+                    sqlStatement = $"SELECT coinpurse FROM players WHERE username = @Tokenname;";
+                    if (!(int.TryParse(_DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD), out int coins) &&
+                          coins >= 5))
                     {
                         number = 403;
-                        return PLAINHEADER + "Not enough money for buying a card package";
+                        return "Not enough money for buying a card package";
                     }
+                    sqlStatement = $"SELECT id FROM packages ORDER BY RANDOM() LIMIT 1;";
 
-                    
-
-                    sqlStatement = $"SELECT cardasjson1, cardasjson2, cardasjson3, cardasjson4, cardasjson5 FROM package ORDER BY RANDOM() LIMIT 1";
-
-                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                    if (!int.TryParse(_DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD), out int packageID))
                     {
-                        number = 500;
-                        Console.WriteLine(sqlResult);
-                        return PLAINHEADER + "internal server error";
+                        return "internal Server error";
                     }
-                    // TODO: turn serialiezed json string into json array
-                    // maybe change ExecuteSQLCodeSanitized if needed
 
-                    number = 200;
+                    sqlStatement = $"SELECT cardasjson1, cardasjson2, cardasjson3, cardasjson4, cardasjson5 FROM packages WHERE id = {packageID};";
+
+                    string package = "";
+
+                    if ((package = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return package;
+                    }
+
+                    sqlStatement = $"DELETE FROM packages WHERE id = {packageID};";
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return "internal Server error";
+                    }
 
                     sqlStatement = $"UPDATE players SET coinpurse = coinpurse - 5 WHERE username = @Tokenname;";
 
-                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
                     {
-                        number = 500;
-                        Console.WriteLine(sqlResult);
-                        return PLAINHEADER + "internal server error";
+                        return "internal Server error";
                     }
 
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    // bellow a player choosing a cards gets simulated
+
+                    JArray packageAsJA = JArray.Parse(package);
+                    JObject cardAsJO;
+
+                    Random userChooseSim = new Random();
+                    int CardThatPlayerTosses = userChooseSim.Next(1, 5);
+
+                    string cardID;
+
+
+                    for (int i = 1; i <= 5; i++)
+                    {
+                        if (i == CardThatPlayerTosses)
+                        {
+                            continue;
+                        }
+
+                        cardAsJO = JObject.Parse((string)packageAsJA[0][$"cardasjson{i}"]);
+
+                        if (!string.IsNullOrEmpty(cardID = (string)cardAsJO["Id"]))
+                        {
+                            if (queryParameterD.TryAdd("Id", cardID)) ;
+                            else
+                            {
+                                queryParameterD["Id"] = cardID;
+                            }
+
+                            sqlStatement = "SELECT Count(*) FROM cardcompendium WHERE username = @Tokenname AND cardID = @Id;";
+                            if (!int.TryParse(_DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD), out int amount))
+                            {
+                                return "internal Server error";
+                            }
+
+                            if (amount == 0)
+                            {
+                                sqlStatement = "INSERT INTO cardcompendium (cardID, username, amount) VALUES (@Id, @Tokenname, 1)";
+                            }
+                            else
+                                sqlStatement = "UPDATE cardcompendium SET amount = amount + 1 WHERE username = @Tokenname AND cardID = @Id;";
+
+                            if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                            {
+                                return "internal Server error";
+                            }
+                        }
+                    }
+                    //end of user sim
+
+                    // prettyfy the output
+                    char[] p = package.ToCharArray();
+                    p[package.IndexOf("{")] = ' ';
+                    p[package.LastIndexOf("}")] = ' ';
+                    package = new string(p);
+
+                    number = 200;
+                    return JSONHEADER + package;
 
                 case "/packages":
-                    if (doTokenCheckIn(parameterD))
+                    if (!IsTokenActive(queryParameterD))
                     {
                         number = 401;
-                        return PLAINHEADER + "INVALID TOKEN";
+                        return "INVALID TOKEN";
                     }
 
-                    if ((parameterD["Tokenname"] != "admin"))
+                    if ((queryParameterD["Tokenname"] != "admin"))
                     {
                         number = 403;
-                        return PLAINHEADER + "Provided user is not \"admin\"";
+                        return "Provided user is not \"admin\"";
                     }
 
+                    sqlStatement = "INSERT INTO packages (cardasjson1, cardasjson2, cardasjson3, cardasjson4, cardasjson5) VALUES (@cardasjson1, @cardasjson2, @cardasjson3, @cardasjson4, @cardasjson5);";
 
-                    sqlStatement = "INSERT INTO packages (id, cardasjson1, cardasjson2, cardasjson3, cardasjson4, cardasjson5) VALUES (@id, @cardasjson1, @cardasjson2, @cardasjson3, @cardasjson4, @cardasjson5);";
-
-                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
                     {
-                        number = 500;
-                        return PLAINHEADER + sqlResult;
+                        return sqlResult;
                     }
+
 
                     sqlStatement = "INSERT INTO cards (cardID, cardAsJson) VALUES (@cardid, @cardasjson)";
                     bool cardAlreadyExisted = false;
-                    var currentCardD = new Dictionary<string, string>();
-                    string key = "id";
-                    foreach (var item in parameterD)
+                    Dictionary<string, string> currentCardD = new Dictionary<string, string>();
+
+                    foreach (var item in queryParameterD)
                     {
-                        if (item.Key != "Tokenname" ||
-                            item.Key != key         )
-                        {                 
-                            currentCardD.Add(key, ExtractCardIDOutOfJsonString(item.Value, "id"));
+                        if (item.Key != "Tokenname")
+                        {
+                            currentCardD.Add("cardid", ExtractValueFromJsonString(item.Value, "Id"));
                             currentCardD.Add("cardasjson", item.Value);
 
-                            if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD).Contains("ERROR"))
+                            if (_DatabaseHandler.ExecuteSQLCode(sqlStatement, currentCardD).Contains("ERROR"))
+                            {
                                 cardAlreadyExisted = true;
+                            }
                             currentCardD = new Dictionary<string, string>();
                         }
                     }
@@ -360,7 +565,7 @@ namespace MonsterTradingCardGame
                     if (cardAlreadyExisted)
                     {
                         number = 409;
-                        return PLAINHEADER + "At least one card in the packages already exists";
+                        return "At least one card in the packages already exists";
                     }
                     else
                     {
@@ -370,236 +575,465 @@ namespace MonsterTradingCardGame
 
                 case "/sessions":
                     sqlStatement = "SELECT COUNT(*) FROM players WHERE username = @username AND password = @password;";
-                    if (int.TryParse(_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD), out int result) &&
-                        result > 0                                                                                       )
+
+                    if (int.TryParse(_DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD), out int result) &&
+                        result > 0)
                     {
-                        SetToken(parameterD["username"]);
+                        SetToken(queryParameterD["username"]);
                         number = 200;
                         return PLAINHEADER + "User login successful";
                     }
-                    
+
                     number = 401;
-                    return PLAINHEADER + "Invalid username/password provided";
-                    
+                    return "Invalid username/password provided";
 
                 default:
-                    if(path.Contains("/tradings/"))
+                    if (path.Contains("/tradings/"))
                     {
-                        if (doTokenCheckIn(parameterD))
+                        if (!IsTokenActive(queryParameterD))
                         {
                             number = 401;
-                            return PLAINHEADER + "Invalid username/password provided";
+                            return "INVALID TOKEN";
                         }
                         string tradeID = GetDataFromPath(path);
                         sqlStatement = "";
-                        return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                        number = 504;
+                        return "Function not implemented";
                     }
-                    else 
-                        return PLAINHEADER + "Unknown path For POST HTTP-method";
+
+                    number = 400;
+                    return "Unknown path For POST HTTP-method";
             }
         }
-        
-        private string HandleGETRequest(string path, Dictionary<string, string> parameterD, ref int number)
+
+        private string HandleGETRequest(string path, Dictionary<string, string> queryParameterD, ref int number)
         {
-            if (doTokenCheckIn(parameterD))
+            if (!IsTokenActive(queryParameterD))
             {
                 number = 401;
                 return "INVALID TOKEN";
             }
-            string message;
+            string sqlResult;
             string sqlStatement;
             switch (path)
             {
                 case "/tradings":
                     sqlStatement = "SELECT * FROM trades WHERE username != @Tokenname;";
-                    string query;
-                    if ((query = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
-                        return query;
-                    if (query == "JSON couldn't be serialized") 
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)) == "[]")
+                    {
                         number = 204;
-                    return query;
+                        return PLAINHEADER + "The request was fine, but there are no trading deals available";
+                    }
+
+                    number = 200;
+                    return JSONHEADER + sqlResult;
 
                 case "/scoreboard":
                     sqlStatement = "SELECT * FROM scoreboard ORDER BY amountofwins DESC;";
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return sqlResult;
+                    }
+
+                    number = 200;
+                    return JSONHEADER + sqlResult;
 
                 case "/stats":
+
                     sqlStatement = "SELECT * FROM scoreboard WHERE username = @Tokenname;";
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                    {
+                        return sqlResult;
+                    }
+
+                    sqlResult = ReplaceUnwantedSurroundings(sqlResult);
+
+                    number = 200;
+                    return JSONHEADER + sqlResult;
 
                 case "/deck?format=plain":
-                    sqlStatement = "SELECT * FROM scoreboard WHERE username = @Tokenname;";
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+
+                    if ((sqlResult = _DatabaseHandler.GetDeck(queryParameterD["Tokenname"], out List<Card> deck)).Contains("ERROR"))
+                    {
+                        return sqlResult;
+                    }
+
+                    string output = $"Deck of {queryParameterD["Tokenname"]}:\n";
+                    int emptyCounter = 0;
+
+                    for (int i = 0; i < deck.Count; i++)
+                    {
+                        switch (deck[i])
+                        {
+                            case null:
+                                ++emptyCounter;
+                                output += "Card was lost in past battles or has been eaten by data corrupting mice :°)";
+                                break;
+                            case Monster monster:
+                                output += monster.ToString();
+                                break;
+                            case TrapSpell trapspell:
+                                output += trapspell.ToString();
+                                break;
+                            case BuffSpell buffspell:
+                                output += buffspell.ToString();
+                                break;
+                            case Spell spell:
+                                output += spell.ToString();
+                                break;
+                            case Card card:
+                                output += card.ToString();
+                                break;
+                        }
+                        output += "\n";
+                    }
+
+                    if (emptyCounter >= 4)
+                    {
+                        number = 204;
+                        return PLAINHEADER + "The request was fine, but the deck doesn't have any cards";
+                    }
+
+                    number = 200;
+                    return PLAINHEADER + output;
 
                 case "/deck":
-                    sqlStatement = "SELECT cardID1, cardID2, cardID3, cardID4 FROM decks WHERE username = @Tokenname;";
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    string deckAsJson = "[\n\r";
+                    for (int i = 1; i <= 4; i++)
+                    {
+                        sqlStatement = $"SELECT c.cardAsJson FROM cards c, decks d WHERE c.cardID = d.cardID{i} AND d.username = @Tokenname;";
+
+                        if ((sqlResult = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                        {
+                            return sqlResult;
+                        }
+                        if (sqlResult == "")
+                        {
+                            deckAsJson += "{}";
+                        }
+                        else
+                            deckAsJson += sqlResult;
+                        if (i < 4)
+                        {
+                            deckAsJson += ",";
+                        }
+                        deckAsJson += "\n\r";
+                    }
+                    deckAsJson += "]";
+                    number = 200;
+                    return JSONHEADER + deckAsJson;
 
                 case "/cards":
-                    sqlStatement = "SELECT c.cardAsJson FROM cardcompendium cc, cards c WHERE  c.cardID = cc.cardID AND username = @Tokenname;";
-                    return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
+                    sqlStatement = "SELECT c.cardAsJson FROM cardcompendium cc, cards c WHERE c.cardID = cc.cardID AND username = @Tokenname;";
+                    return _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD);
 
                 default:
                     if (path.Contains("/users/"))
                     {
-                        if (_DatabaseHandler.checkUsersExistance(parameterD["oldusername"]))
+                        string toBeSearchedUser = GetDataFromPath(path);
+
+                        if (queryParameterD["Tokenname"] != toBeSearchedUser &&
+                            queryParameterD["Tokenname"] == "admin")
                         {
-                            message = "User not found";
+                            number = 401;
+                            return $"You don't have permissions retrieve userdata of {toBeSearchedUser}!";
+                        }
+
+                        if (!_DatabaseHandler.CheckUsersExistance(toBeSearchedUser))
+                        {
                             number = 404;
                             return "User not found";
                         }
 
-                        string currentUser = GetDataFromPath(path);
-
-                        if (parameterD["Tokenname"] != currentUser ||
-                            parameterD["Tokenname"] != "admin"     )
-                        {
-                            number = 401;
-                            return $"You don't have permissions retrieve userdata of {currentUser}!";
-                        }
-
-                        parameterD["Username"] = currentUser;
+                        queryParameterD["Username"] = toBeSearchedUser;
                         sqlStatement = "SELECT * FROM players WHERE username = @Username;";
 
-                        number = 200;
-                        if ((message = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                        if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
                         {
-                            Console.WriteLine(message);
-                            number = 500;
+                            return sqlResult;
                         }
-                        return message;
+
+                        sqlResult = ReplaceUnwantedSurroundings(sqlResult);
+
+
+                        number = 200;
+                        return JSONHEADER + sqlResult;
                     }
-                    else
-                        return "Unknown path For GET HTTP-method";
+
+                    number = 400;
+                    return "Unknown path For GET HTTP-method";
             }
         }
-        
-        private string HandlePUTRequest(string path, Dictionary<string, string> parameterD, ref int number)
+
+        private string HandlePUTRequest(string path, Dictionary<string, string> queryParameterD, ref int number)
         {
-            string message;
+            string sqlResult;
             string sqlStatement;
             if (path == "/deck")
             {
-                if (doTokenCheckIn(parameterD))
+                if (!IsTokenActive(queryParameterD))
                 {
                     number = 401;
                     return "INVALID TOKEN";
                 }
 
+                Dictionary<string, int> CardIDWithAmountD = new Dictionary<string, int>();
+                string errmsg = "The following Cards caused problems, due to you not having enough of them: \n\r";
                 int i = 1;
-                foreach (var item in parameterD)
+
+                foreach (var item in queryParameterD)
                 {
                     if (item.Key != "Tokenname")
                     {
-                        sqlStatement = $"SELECT amount FROM decks WHERE cardID = @cardID{i} AND username = @Tokenname;";
+                        if (CardIDWithAmountD.TryAdd(queryParameterD[$"cardID{i}"], 0)) ;
+                        else
+                        {
+                            ++CardIDWithAmountD[queryParameterD[$"cardID{i}"]];
+                        }
 
-                        if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD).Contains("ERROR"))
+                        sqlStatement = $"SELECT amount FROM cardcompendium WHERE cardID = @cardID{i} AND username = @Tokenname;";
+
+                        if ((sqlResult = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                        {
+                            return sqlResult;
+                        }
+
+                        if (!int.TryParse(sqlResult, out int amount))
+                        {
+                            return "internal server error";
+                        }
+
+                        if (amount == 0 ||
+                            amount < CardIDWithAmountD[queryParameterD[$"cardID{i}"]])
                         {
                             number = 403;
-                            return "";
+                            errmsg += $"You don't own the card with the id of {queryParameterD[$"cardID{i}"]}!\n\r";
                         }
                         ++i;
                     }
                 }
 
-                sqlStatement = "SELECT Count(*) FROM decks WHERE username = @Tokenname;"; 
-                if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD) == "0")
-                    sqlStatement = "INSERT INTO decks (username, cardID1, cardID2, cardID3, cardID4) VALUES (@Tokenname, @cardid1, @cardid2, @cardid3, @cardid4);";
+                if (number == 403)
+                {
+                    return errmsg;
+                }
+
+                sqlStatement = "SELECT Count(*) FROM decks WHERE username = @Tokenname;";
+                if (_DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD) == "0")
+                {
+                    sqlStatement = "INSERT INTO decks (username, cardID1, cardID2, cardID3, cardID4) VALUES (@Tokenname, @cardID1, @cardID2, @cardID3, @cardID4);";
+                }
                 else
-                    sqlStatement = "UPDATE decks SET cardID1 = @cardid1, cardID2 = @cardid2, cardID3 = @cardid3, cardID4 = @cardid4 WHERE username = @Tokenname;";
-                if (_DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD).Contains("ERROR"))
+                    sqlStatement = "UPDATE decks SET cardID1 = @cardID1, cardID2 = @cardID2, cardID3 = @cardID3, cardID4 = @cardID4 WHERE username = @Tokenname;";
+
+                if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
                 {
                     number = 400;
-                    return "";
+                    return "The provided deck did not include the required amount of cards";
                 }
+
                 number = 200;
-                return "SUCCESS";
+                return PLAINHEADER + "SUCCESS";
 
             }
             else if (path.Contains("/users/"))
             {
-                if (!parameterD.ContainsKey("oldusername")  &&
-                    !IsTokenActive(parameterD["oldusername"]))
+                if (!IsTokenActive(queryParameterD))
                 {
                     number = 401;
                     return "INVALID TOKEN";
                 }
+                string currentUser = GetDataFromPath(path);
 
-                if(_DatabaseHandler.checkUsersExistance(parameterD["oldusername"]))
+                if (queryParameterD["Tokenname"] != currentUser)
+                {
+                    number = 401;
+                    return $"You don't have permissions change userdata of {currentUser}!";
+                }
+
+                if (!_DatabaseHandler.CheckUsersExistance(queryParameterD["Tokenname"]))
                 {
                     number = 404;
                     return "User not found";
                 }
-
-                sqlStatement = "UPDATE players SET username = @username, password = @password, bio = @bio, image = @image WHERE username = @oldusername;";
-                if ((message = _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD)).Contains("ERROR"))
+                sqlStatement = "UPDATE players SET";
+                foreach (var keyValuePair in queryParameterD)
                 {
-                    number = 500;
-                    return message;
+                    switch (keyValuePair.Key)
+                    {
+                        case "Tokenname":
+                            continue;
+                        case "name":
+                            sqlStatement += " username = @name,";
+                            continue;
+                        case "password":
+                            sqlStatement += " password = @password,";
+                            continue;
+                        case "bio":
+                            sqlStatement += " bio = @bio,";
+                            continue;
+                        case "image":
+                            sqlStatement += " image = @image,";
+                            continue;
+                    }
                 }
+
+                sqlStatement = sqlStatement.Remove(sqlStatement.LastIndexOf(","));
+                sqlStatement += " WHERE username = @Tokenname;";
+
+                if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                {
+                    return sqlResult;
+                }
+
+                // Change the other tables
+                sqlStatement = "UPDATE REPLACETHIS SET username = @name WHERE username = @Tokenname;";
+                string[] tables = { "decks", "cardcompendium", "trades", "scoreboard" };
+                for (int i = 0; i < tables.Length; i++)
+                {
+                    if (i == 0)
+                    {
+                        sqlStatement = sqlStatement.Replace("REPLACETHIS", tables[0]);
+                    }
+                    else if (i < tables.Length)
+                    {
+                        sqlStatement = sqlStatement.Replace(tables[i - 1], tables[i]);
+                    }
+
+                    _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD);
+                }
+
+                RemoveToken(queryParameterD["Tokenname"]);
+                SetToken(queryParameterD["name"]);
+
                 number = 200;
-                return "SUCCESS";    
+                return PLAINHEADER + "SUCCESS";
             }
-            return "Unknown path for PUT HTTP-method";
+            number = 400;
+            return "Unknown path For PUT HTTP-method";
         }
-        private string HandleDELETERequest(string path, Dictionary<string, string> parameterD, ref int number)
+        private string HandleDELETERequest(string path, Dictionary<string, string> queryParameterD, ref int number)
         {
             if (path.Contains("/tradings/"))
             {
-                if (doTokenCheckIn(parameterD))
+                if (!IsTokenActive(queryParameterD))
                 {
                     number = 401;
                     return "INVALID TOKEN";
                 }
-                string id = GetDataFromPath(path);
-                string sqlStatement = $"DELETE FROM trades WHERE tradeID = {id};";
-                return _DatabaseHandler.ExecuteSQLCodeSanitized(sqlStatement, parameterD);
-            }   
+
+                queryParameterD.Add("id", GetDataFromPath(path));
+
+                string sqlResult;
+                string sqlStatement = "SELECT COUNT(*) FROM trades WHERE tradeID = @id;";
+                if ((sqlResult = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                {
+                    return sqlResult;
+                }
+
+                if (int.TryParse(sqlResult, out int tradeAmount) &&
+                    tradeAmount < 1)
+                {
+                    number = 404;
+                    return "The provided deal ID was not found";
+                }
+
+                sqlStatement = "SELECT COUNT(*) FROM trades WHERE username = @Tokenname AND tradeID = @id;";
+                if ((sqlResult = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                {
+                    return sqlResult;
+                }
+                if (int.TryParse(sqlResult, out tradeAmount) &&
+                    tradeAmount < 1)
+                {
+                    number = 409;
+                    return "A deal with this deal ID already exists";
+
+                }
+
+                sqlStatement = $"DELETE FROM trades WHERE tradeID = @id;";
+                if ((sqlResult = _DatabaseHandler.ExecuteSQLCode(sqlStatement, queryParameterD)).Contains("ERROR"))
+                {
+                    return sqlResult;
+                }
+
+                sqlStatement = "SELECT amount FROM cardcompendium WHERE cardID = @id";
+                if ((sqlResult = _DatabaseHandler.ExecuteSqlCodeWithSingularResult(sqlStatement, queryParameterD)).Contains("ERROR"))
+                {
+                    return sqlResult;
+                }
+
+                if (int.TryParse(sqlResult, out tradeAmount) &&
+                    tradeAmount < 0)
+                {
+                    number = 403;
+                    return "The deal contains a card that is not owned by the user";
+                }
+
+                number = 200;
+                return PLAINHEADER + "Trading deal successfully deleted";
+            }
+            number = 400;
             return "Unknown path for DELETE HTTP-method";
         }
+
         // JSON HANDLER FUNCTIONS:
-
-        public static string TurnHttpDataToParameterD(Dictionary<string, string> httpDataD, out Dictionary<string, string> parameterD)
+        /// <summary>
+        /// fills given Dictionary queryParameterD with data from httpDataD 
+        /// </summary>
+        /// <param name="httpDataD"></param>
+        /// <param name="queryParameterD"></param>
+        /// <returns>empty string ("") if extraction was successfull or an error message</returns>
+        public static string FillParameterD(Dictionary<string, string> httpDataD, out Dictionary<string, string> queryParameterD)
         {
-            parameterD = new Dictionary<string, string>();
+            queryParameterD = new Dictionary<string, string>();
 
-            if (!httpDataD.TryGetValue("JSON-Data", out string jsonAsString))
-                return "ERROR: No Key named JSON-Data was found in httpDataD";
-
-            try
+            if (httpDataD.TryGetValue("JSON-Data", out string jsonAsString))
             {
-                if (jsonAsString.Contains("["))
+                try
                 {
-                    JArray jsonData = (JArray) JsonConvert.DeserializeObject(jsonAsString);
-                    
-                    if ((parameterD = JsonArrayToDictionary(jsonData, httpDataD["path"])) == null)
-                        return "ERROR: the parameters of the provided JSON couldn't be parsed";
-                }
-                else
-                {
-                    JObject jsonData = (JObject) JsonConvert.DeserializeObject(jsonAsString);
+                    if (jsonAsString.Contains("["))
+                    {
+                        JArray jsonData = (JArray)JsonConvert.DeserializeObject(jsonAsString);
 
-                    if ((parameterD = JsonObjectToDictionary(jsonData)) == null)
-                        return "ERROR: the parameters of the provided JSON couldn't be parsed";
+                        if ((queryParameterD = JArrayToDictionary(jsonData, httpDataD["path"])) == null)
+                        {
+                            return "ERROR: the parameters of the provided JSON couldn't be parsed";
+                        }
+                    }
+                    else
+                    {
+                        if (jsonAsString == "")
+                        {
+                            return "";
+                        }
+                        JObject jsonData = (JObject)JsonConvert.DeserializeObject(jsonAsString);
+
+                        if ((queryParameterD = JsonObjectToDictionary(jsonData)) == null)
+                        {
+                            return "ERROR: the parameters of the provided JSON couldn't be parsed";
+                        }
+                    }
                 }
-                if (httpDataD.ContainsKey("Tokenname"))
-                    parameterD.Add("Tokenname", httpDataD["Tokenname"]);
-                return "";
+                catch (JsonSerializationException ex)
+                {
+                    Console.WriteLine($"Error deserializing JSON: {ex.Message}");
+                    return "ERROR: the provided JSON couldn't be deserialized, please check the Syntax";
+                }
             }
-            catch (JsonSerializationException ex)
-            {
-                Console.WriteLine($"Error deserializing JSON: {ex.Message}");
-                return "ERROR: the provided JSON couldn't be deserialized, please check the Syntax";
-            }
+
+            return "";
         }
 
         public static Dictionary<string, string> JsonObjectToDictionary(JObject jsonData)
         {
-            var parameterD = new Dictionary<string, string>();
-            foreach (var property in jsonData.Properties())
-                parameterD.Add(property.Name.ToLower(), property.Value.ToString());
+            var dictionary = new Dictionary<string, string>();
 
-            return parameterD;
+            foreach (var property in jsonData.Properties())
+                dictionary.Add(property.Name.ToLower(), property.Value.ToString());
+
+            return dictionary;
         }
 
         /// <summary>
@@ -608,16 +1042,14 @@ namespace MonsterTradingCardGame
         /// <param name="jsonArray"></param>
         /// <param name="option"></param>
         /// <returns></returns>
-        public static Dictionary<string, string> JsonArrayToDictionary(JArray jsonArray, string option)
+        public static Dictionary<string, string> JArrayToDictionary(JArray jsonArray, string option)
         {
             var outputD = new Dictionary<string, string>();
-            
+
             switch (option)
             {
                 case "/packages":
                     int index = 1;
-                    outputD.Add("id", jsonArray.First().ToString());
-                    jsonArray.RemoveAt(index);
                     foreach (JObject element in jsonArray)
                     {
                         outputD.Add("cardasjson" + index++, element.ToString());
@@ -645,110 +1077,151 @@ namespace MonsterTradingCardGame
         }
 
         // POOL HELPER FUNCTIONS:
-        public Battle WaitForOpponent()
-        {
-            lock (_PoolLock)
-            {
-                while (_waitingPlayers.Count < 2)
-                    Monitor.Wait(_PoolLock);
-
-                List<User> players = _waitingPlayers.ToList();
-                _waitingPlayers.Clear();
-                Battle battle = new Battle(players[1], players[2]);
-                return battle;
-            }
-        }
-        public void AddPlayer(User player)
+        public Battle WaitForOpponent(User player)
         {
             lock (_PoolLock)
             {
                 _waitingPlayers.Enqueue(player);
                 Monitor.PulseAll(_PoolLock);
+
+                if (_waitingPlayers.Count > 1)
+                {
+                    _battle = new Battle(_waitingPlayers.Dequeue(), _waitingPlayers.Dequeue());
+                    _battle.StartBattle();
+                    Thread.Sleep(100);
+                    return _battle;
+                }
+                else
+                {
+                    if (_waitingPlayers.Count < 2)
+                    {
+                        Monitor.Wait(_PoolLock);
+                    }
+
+                    while (_battle != null && !_battle.HasEnded)
+                    {
+                        Thread.Sleep(10);
+                    }
+                    return _battle;
+                }
             }
         }
 
         // STRING PARSING FUNCTIONS:
-        
-        public static string CreateHttpResponse(int responseID, string responseData)
+
+        /// <summary>
+        /// creates HTTP-Response string out of responseID and responseData fields;
+        /// if the parameter is >= 300, then the function will assume that an error has occurred, 
+        /// in which case ResponseData must be plaintext
+        /// </summary>
+        /// <param name="responseID"></param>
+        /// <param name="responseData"></param>
+        /// <returns>HTTP response</returns>
+        public string CreateHttpResponse(int responseID, string responseData)
         {
-            return $"HTTP/1.1 {responseID}\r\n{responseData}";
+            if (responseID >= 300)
+            {
+                return $"HTTP/1.1 {responseID}\r\n{PLAINHEADER + responseData}\r\n";
+            }
+            return $"HTTP/1.1 {responseID}\r\n{responseData}\r\n";
         }
 
-        public static string GetDataFromPath(string path)
+        public string GetDataFromPath(string path)
         {
-            return path[(path.LastIndexOf('/') + 1)..(path.Length - 1)];
+            return path[(path.LastIndexOf('/') + 1)..path.Length];
         }
-        public static string ExtractCardIDOutOfJsonString(string jsonString, string key)
+        public string ExtractValueFromJsonString(string jsonString, string key)
         {
             if (!jsonString.Contains(key))
+            {
                 return "";
+            }
 
-            int start = jsonString.IndexOf(key) + 5;
-            int lengthOfCardID = 0;
-
-            for (int i = start; i < jsonString[i]; i++)
+            int indexOfvalue = 0;
+            int qutationOccurence = 0;
+            for (int i = jsonString.IndexOf(key) + key.Length + 1; i < jsonString.Length; i++)
             {
                 if (jsonString[i] == '"')
                 {
-                    lengthOfCardID = i-1;
-                    break;
+                    switch (++qutationOccurence)
+                    {
+                        case 1:
+                            indexOfvalue = (i + 1);
+                            break;
+                        case 2:
+                            return jsonString[indexOfvalue..i];
+                    }
                 }
             }
-            return jsonString[start..lengthOfCardID];
+
+            return "";
         }
 
-        public static string ExtractHTTPdata(string request, out Dictionary<string, string> httpDataD)
+        public static string ExtractHTTPData(string request, out Dictionary<string, string> httpDataD)
         {
             httpDataD = new Dictionary<string, string>();
-            string httpMethod = "", path = "";
+            httpDataD.Add("HTTP-method", "");
+            httpDataD.Add("path", "");
 
             int indexHelper = 0;
 
             for (int i = 0; i < request.Length && indexHelper < 3; i++)
             {
                 if (request[i] == ' ')
+                {
                     ++indexHelper;
+                }
                 else if (indexHelper == 0)
-                    httpMethod += request[i];
+                {
+                    httpDataD["HTTP-method"] += request[i];
+                }
                 else if (indexHelper == 1)
-                    path += request[i];
+                {
+                    httpDataD["path"] += request[i];
+                }
             }
-            httpDataD.Add("HTTP-method", httpMethod);
-            httpDataD.Add("path", path);
 
             if (request.Contains("Authorization: Bearer "))
             {
-                
                 string username = "";
                 string restOftheToken = "";
                 bool minusHasBeenReached = false;
 
                 if ((indexHelper = request.IndexOf("Authorization: Bearer ")) == -1)
+                {
                     return "FORMATTING-ERROR: Authorization Field was found, but has no index...";
+                }
 
                 for (int i = indexHelper + 22;
                          i < request.Length &&
                          request[i] != (char)13; i++)
                 {
                     if (request[i] == '-')
+                    {
                         minusHasBeenReached = true;
-                    if(minusHasBeenReached)
+                    }
+                    if (minusHasBeenReached)
+                    {
                         restOftheToken += request[i];
+                    }
                     else
                         username += request[i];
                 }
-                if(restOftheToken == "-mtcgToken")
+                if (restOftheToken == "-mtcgToken")
+                {
                     httpDataD.Add("Tokenname", username);
+                }
             }
 
             if (request.Contains("Content-Type: application/json"))
             {
-
                 string lengthAsString = "";
 
                 // Underneath indexHelper is used to capture the index of "Content-Length: "
                 if ((indexHelper = request.IndexOf("Content-Length: ")) == -1)
+                {
                     return "FORMATTING-ERROR: Content-Length Field was found, but has no index...";
+                }
 
                 // Underneath indexHelper is used to save the length of Json data
                 for (int i = indexHelper + 16;
@@ -757,25 +1230,71 @@ namespace MonsterTradingCardGame
                 {
                     lengthAsString += request[i];
                 }
+
                 // Underneath indexHelper is used to save the length of Json data
                 if (!int.TryParse(lengthAsString, out indexHelper))
+                {
                     return "PARSING-ERROR: Could not Parse Content-Length";
-
-                httpDataD.Add("JSON-Data", $"{request[(1 + request.Length - (indexHelper))..(request.Length - 1)].Replace("\\", string.Empty)}");
+                }
+                httpDataD.Add("JSON-Data", $"{request[(request.Length - indexHelper)..(request.Length)].Replace("\\", string.Empty)}");
             }
-
             return "";
         }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="input"></param>
+        /// <returns>
+        /// true, if given port is valid
+        /// </returns>
         public bool ValidatePORT(int input)
         {
             return (0 <= input && input <= 65535);
         }
+        /// <summary>
+        /// returns true if given port is valid
+        /// </summary>
+        /// <param name="input"></param>
+        /// <returns>
+        /// true, if given ip is valid
+        /// </returns>
         public bool ValidateIP(string input)
         {
             if (string.IsNullOrEmpty(input))
+            {
                 return false;
-            IPAddress _;
-            return IPAddress.TryParse(input, out _);
+            }
+            return IPAddress.TryParse(input, out IPAddress _);
+        }
+        /// <summary>
+        /// Replaceses [ and ] in given string
+        /// </summary>
+        /// <param name="sqlResult"></param>
+        /// <returns>string without [ and ]</returns>
+        public static string ReplaceUnwantedSurroundings(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return "";
+            }
+
+            if (text.Contains("[") &&
+               !text.Contains("]"))
+            {
+                return text.Replace("[", "");
+            }
+
+            if (!text.Contains("[") &&
+                 text.Contains("]"))
+            {
+                return text.Replace("]", "");
+            }
+
+            text = text.Replace("[", "");
+            text = text.Replace("]", "");
+
+            return text;
         }
     }
+
 }

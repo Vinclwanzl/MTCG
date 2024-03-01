@@ -6,10 +6,8 @@ using System.Threading.Tasks;
 
 namespace MonsterTradingCardGame
 {
-    class User
+    public class User
     {
-        private int _amountOfWins;
-
         private string _name;
         public string Name 
         { 
@@ -27,13 +25,11 @@ namespace MonsterTradingCardGame
                     _deck = value; 
             } 
         }
-        
+
         public User(string name, List<Card> deck)
-        { 
+        {
             _name = name;
             _deck = deck;
         }
-
-        
     }
 }

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace MonsterTradingCardGame
 {
-    class TrapSpell : Spell
+    public class TrapSpell : Spell
     {
         private EDinoTypes _trapTrigger;
         public EDinoTypes TrapTrigger { get { return _trapTrigger; } }
@@ -28,7 +28,7 @@ namespace MonsterTradingCardGame
         public override string ToString()
         {
             return $"Name: {this.Name} | Damage: {this.Damage} {Enum.GetName(typeof(EDinoTypes), this.DinoType)}-damage | " +
-                   $"Trap-trigger: {this.TrapTrigger} | Description: {this.Description} | Cost: {this.ShopCost}|\n";
+                   $"Trap-trigger: {this.TrapTrigger} | Description: {this.Description} | Cost: {this.ShopCost}|";
         }
     }
 }

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace MonsterTradingCardGame
 {
-    class Monster : Card
+    public class Monster : Card
     {
         /// <summary>        
         /// </summary>
@@ -15,11 +15,11 @@ namespace MonsterTradingCardGame
         /// <param name="shopCost"></param>
         /// <param name="damage"></param>
         public Monster(string id, EDinoTypes dinoType, string name, string description, int shopCost, int damage)
-               : base (id, dinoType, name, description, shopCost, damage)
+               : base (id, dinoType, name, description, shopCost, damage) 
         {
-
+            
         }
-
+        
     }
 
 }

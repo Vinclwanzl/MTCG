@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace MonsterTradingCardGame
 {
-    class BuffSpell : Spell
+    public class BuffSpell : Spell
     {
         private int _buffAmount;
         public int BuffAmount { get { return _buffAmount; } }
@@ -29,7 +29,7 @@ namespace MonsterTradingCardGame
         {
             string damageType = Enum.GetName(typeof(EDinoTypes), this.DinoType) + "-damage";
             return $"Name: {this.Name} | Damage: {this.Damage} {damageType} | and Buffs: {this.BuffAmount} {damageType} | " +
-                   $"Description: {this.Description} | Cost: {this.ShopCost}|\n";
+                   $"Description: {this.Description} | Cost: {this.ShopCost}|";
         }
     }
 }

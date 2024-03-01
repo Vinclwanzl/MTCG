@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace MonsterTradingCardGame
 {
-    class Buffs
+    public class Buffs
     {
         private bool _buffExists = false;
         public bool BuffExists { get {  return _buffExists; } }

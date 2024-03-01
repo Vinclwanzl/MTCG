@@ -16,7 +16,7 @@ namespace MonsterTradingCardGame
         BUFF = 1,
         TRAP = 2
     }
-    class Spell : Card
+    public class Spell : Card
     {
         private ESpellTypes _spellType;
         public ESpellTypes SpellType { get { return _spellType; } }
@@ -37,7 +37,7 @@ namespace MonsterTradingCardGame
         public override string ToString()
         {
             return $"Name: {this.Name} | Damage: {this.Damage} {Enum.GetName(typeof(EDinoTypes), this.DinoType)}-damage | " +
-                   $"Description: {this.Description} | Cost: {this.ShopCost}|\n";
+                   $"Description: {this.Description} | Cost: {this.ShopCost}|";
         }
     }
 }
