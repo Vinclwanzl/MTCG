@@ -150,6 +150,12 @@ namespace MonsterTradingCardGame
             }
             lock (_DataBaseLock)
             {
+                if (_dbConnection == null)
+                {
+                    Console.WriteLine("ERROR: Database Connection has not been cutoff");
+                    return false;
+                }
+
                 Dictionary<string, string> queryParameterD = new Dictionary<string, string>
                 {
                     { "username", username }
@@ -302,6 +308,12 @@ namespace MonsterTradingCardGame
         {
             lock (_DataBaseLock)
             {
+                if (_dbConnection == null)
+                {
+                    Console.WriteLine("ERROR: Database Connection has not been cutoff");
+                    return false;
+                }
+
                 string sqlStatement = $"SELECT COUNT(*) FROM {tableName};";
                 Dictionary<string, string> _ = new Dictionary<string, string>();
 
@@ -328,6 +340,7 @@ namespace MonsterTradingCardGame
                     Console.WriteLine("ERROR: Database Connection has not been cutoff");
                     return "ERROR: We are facing database issues right now";
                 }
+                
                 try
                 {
                     string sqlCommand;

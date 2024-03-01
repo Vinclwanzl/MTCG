@@ -69,7 +69,6 @@ namespace MonsterTradingCardGame
                     Socket clientSocket = serverSocket.Accept();
                     Console.WriteLine("Client connected.");
 
-                    // Verwende einen Thread anstelle eines Tasks
                     Thread clientThread = new Thread(() => HandleClient(clientSocket));
                     clientThread.Start();
                 }
@@ -116,7 +115,7 @@ namespace MonsterTradingCardGame
             }
         }
         /// <summary>
-        /// removes Usertokens
+        /// removes user-tokens
         /// </summary>
         /// <param name="userToken"></param>
         private static void RemoveToken(string userToken)
@@ -172,7 +171,7 @@ namespace MonsterTradingCardGame
 
                 Console.WriteLine($"Response sent.");
 
-                // remove Socket
+                // remove socket
                 clientSocket.Shutdown(SocketShutdown.Both);
                 clientSocket.Close();
 
@@ -392,7 +391,6 @@ namespace MonsterTradingCardGame
                     User player = new User(queryParameterD["Tokenname"], _);
 
                     Battle currentBattle = WaitForOpponent(player);
-                    Console.WriteLine("PLAYER:\n" + queryParameterD["Tokenname"] + "\n Battle with players:" + currentBattle.Player1.Name + ", " + currentBattle.Player2.Name + "\n");
 
                     string winner = currentBattle.Winner;
 
@@ -1025,7 +1023,11 @@ namespace MonsterTradingCardGame
 
             return "";
         }
-
+        /// <summary>
+        /// turns a JObject into into a Dictionary<string, string>
+        /// </summary>
+        /// <param name="jsonData"></param>
+        /// <returns>Dictionary<string, string> with of JObject data</returns>
         public static Dictionary<string, string> JsonObjectToDictionary(JObject jsonData)
         {
             var dictionary = new Dictionary<string, string>();
@@ -1037,11 +1039,11 @@ namespace MonsterTradingCardGame
         }
 
         /// <summary>
-        /// option should either be the current path defined in the api-spec or "" if it is a normal jsonarray
+        /// turns JArray into Dictionary<string, string> option should either be the current path defined in the api-spec or "" if it is a normal jsonarray
         /// </summary>
         /// <param name="jsonArray"></param>
         /// <param name="option"></param>
-        /// <returns></returns>
+        /// <returns>Dictionary<string, string> with data of JArray</returns>
         public static Dictionary<string, string> JArrayToDictionary(JArray jsonArray, string option)
         {
             var outputD = new Dictionary<string, string>();
@@ -1071,12 +1073,16 @@ namespace MonsterTradingCardGame
                         outputD.Add(propRow.Name.ToString(), propRow.Value.ToString());
                     }
                     break;
-
             }
             return outputD;
         }
 
         // POOL HELPER FUNCTIONS:
+        /// <summary>
+        /// waits for opponent and starts Battle when opponent is found
+        /// </summary>
+        /// <param name="player"></param>
+        /// <returns>concluded Battle</returns>
         public Battle WaitForOpponent(User player)
         {
             lock (_PoolLock)
