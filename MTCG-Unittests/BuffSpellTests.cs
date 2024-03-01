@@ -67,7 +67,7 @@ namespace MTCG_Unittests
 
             // Assert
             string expected = $"Name: {name} | Damage: {damage} {dinoType}-damage | and Buffs: {buffAmount} {dinoType}-damage | " +
-                              $"Description: {description} | Cost: {shopCost}|\n";
+                              $"Description: {description} | Cost: {shopCost}|";
             Assert.AreEqual(expected, result);
         }
     }

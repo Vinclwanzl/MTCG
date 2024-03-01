@@ -66,7 +66,7 @@ namespace MTCG_Unittests
 
             // Assert
             string expected = $"Name: {name} | Damage: {damage} {Enum.GetName(typeof(EDinoTypes), dinoType)}-damage | " +
-                              $"Description: {description} | Cost: {shopCost}|\n";
+                              $"Description: {description} | Cost: {shopCost}|";
             Assert.AreEqual(expected, result);
         }
     }

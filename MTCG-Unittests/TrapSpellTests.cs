@@ -68,7 +68,7 @@ namespace MTCG_Unittests
             string result = trapSpell.ToString();
 
             // Assert
-            string expected = $"Name: {name} | Damage: {damage} {dinoType}-damage | Trap-trigger: {trapTrigger} | Description: {description} | Cost: {shopCost}|\n";
+            string expected = $"Name: {name} | Damage: {damage} {dinoType}-damage | Trap-trigger: {trapTrigger} | Description: {description} | Cost: {shopCost}|";
             Assert.AreEqual(expected, result);
         }
     }
